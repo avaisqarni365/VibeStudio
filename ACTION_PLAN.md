@@ -10,7 +10,7 @@
 - Renames + wiring: ✅ done by Claude before this hand-off
 - Skills: 4 dev-portal skills inside `D:\VibeStudio\.claude\skills\` (project-local)
 - Skills, accounting flavour: REMOVED from `C:\Users\jamav\.claude\skills\` so they no longer auto-load in ACCA
-- Git: ⏳ not initialised yet — you'll run `git init` (Step 12)
+- Git: ✅ initialised on 2026-05-31 (commits `57ffd9c` + `0f07ea7`); ⏳ remote not added yet — you'll run `git remote add origin <url>` + `git push -u origin main`
 - Postgres: ⏳ database not yet created on IONOS — you'll do that (Step 4)
 - `node_modules`: ⏳ not installed — you'll run `npm install` (Step 5)
 
@@ -158,18 +158,16 @@ api port.
 If a page 404s → check `apps/api/src/index.ts` mounts the dev-portal
 router (✅ Claude already did this).
 
-### 9. ⏳ Initialize git repo
+### 9. ✅ Initialize git repo (Claude did this on 2026-05-31)
+
+Two commits on `main` already:
+- `57ffd9c` Initial commit — 113 files, 21,755 insertions
+- `0f07ea7` docs: clean up CLAUDE.md + README.md references
+
+⏳ Remote still to add (you do this):
 
 ```bash
 cd D:/VibeStudio
-git init
-git add .
-git commit -m "Initial commit — extracted from ACCA dev portal at 2026-05-31"
-```
-
-Create the remote (GitHub / GitLab) then:
-
-```bash
 git remote add origin git@github.com:<your_org>/vibestudio.git
 git push -u origin main
 ```
