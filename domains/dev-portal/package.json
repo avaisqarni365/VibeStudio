@@ -1,0 +1,12 @@
+{
+  "name": "@vibestudio/domain-dev-portal",
+  "version": "0.1.0",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@vibestudio/config": "*",
+    "@vibestudio/database": "*",
+    "@vibestudio/logging": "*",
+    "bcryptjs": "^2.4.3"
+  }
+}

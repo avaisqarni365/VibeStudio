@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "incremental": true,
+    "jsx": "preserve",
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "paths": {
+      "@vibestudio/api": ["apps/api/src"],
+      "@vibestudio/web": ["apps/web/src"],
+      "@vibestudio/database": ["packages/database/src"],
+      "@vibestudio/auth": ["packages/auth/src"],
+      "@vibestudio/types": ["packages/types/src"],
+      "@vibestudio/ui": ["packages/ui/src"],
+      "@vibestudio/dev-portal": ["domains/dev-portal/src"],
+      "@vibestudio/ai-prompts": ["domains/ai-prompts/src"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".next", "build"]
+}

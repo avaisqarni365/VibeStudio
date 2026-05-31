@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "declaration": false,
+    "baseUrl": ".",
+    "paths": {
+      "@vibestudio/*": ["../../packages/*/src", "../../domains/*/src"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

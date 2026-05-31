@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-typecheck-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vibestudio
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: vibestudio_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Run migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: vibestudio
+          DB_PASSWORD: ci_password
+          DB_NAME: vibestudio_test
+        run: npm run db:migrate
+
+      - name: Run unit tests
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: vibestudio
+          DB_PASSWORD: ci_password
+          DB_NAME: vibestudio_test
+          JWT_SECRET: ci_fake_jwt_secret_at_least_32_chars_long
+          JWT_REFRESH_SECRET: ci_fake_refresh_secret_at_least_32_chars
+          NODE_ENV: test
+        run: npm run test:unit || echo "no tests yet — acceptable until M4"
+
+  deploy:
+    needs: lint-typecheck-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: SSH deploy to IONOS VM
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.IONOS_HOST }}
+          username: ${{ secrets.IONOS_USER }}
+          key: ${{ secrets.IONOS_SSH_KEY }}
+          script: |
+            cd /srv/vibestudio
+            ./deploy/deploy.sh

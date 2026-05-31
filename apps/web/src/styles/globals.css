@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Accent palette (CSS variables — Settings → Appearance can rewrite at runtime) */
+:root {
+  --accent-50:  253 248 243;
+  --accent-100: 249 239 228;
+  --accent-200: 242 221 198;
+  --accent-300: 232 196 158;
+  --accent-400: 219 166 115;
+  --accent-500: 209 141 78;
+  --accent-600: 196 122 58;
+  --accent-700: 163  98 48;
+  --accent-800: 131  79 44;
+  --accent-900: 107  65 39;
+}
+
+html, body, #__next {
+  height: 100%;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid rgb(var(--accent-500));
+  outline-offset: 2px;
+}
+
+/* Custom scrollbar (Claude.ai-style) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
