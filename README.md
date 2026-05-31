@@ -105,4 +105,4 @@ INSIDE ACCA, not how it works in VibeStudio.
 
 - **MIGRATION_GUIDE.md** — how to make this boot, in 6 steps
 - **ARCHITECTURE.md** — what each module does (to-write — start with
-  `.claude/skills/acca-dev-portal-architecture.md`)
+  `.claude/skills/vibestudio-architecture.md`)

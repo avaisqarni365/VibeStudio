@@ -117,4 +117,4 @@ issues are:
 - Update relevant skills in `.claude/skills/`
 - Update `ACTION_PLAN.md` checkboxes
 - If you touch the DB schema, ship a new migration (`NNN_<slug>.js`) — never edit an existing one
-- If you change auth flow, update `.claude/skills/acca-dev-portal-auth.md` (or replace with `vibestudio-auth.md`)
+- If you change auth flow, update `.claude/skills/vibestudio-auth.md`

@@ -253,11 +253,11 @@ Doc rots otherwise.
 | `vibestudio-session-bootstrap.md` | First thing Claude reads — orients to the project |
 | `vibestudio-ionos-deploy.md` | Deployment + tunnel + systemd recipes |
 | `vibestudio-database.md` | Schema overview of 29 dev_* tables |
-| `vibestudio-modernisation-roadmap.md` | The "what to refactor next" backlog |
-| `acca-dev-portal-architecture.md` | Inherited — original architecture |
-| `acca-dev-portal-auth.md` | Inherited — auth pattern + httpOnly cookies |
-| `acca-dev-portal-ai-prompt-builder.md` | Inherited — AI prompt assembly |
-| `acca-dev-portal-vibe-coding.md` | Inherited — vibe-coding workflow |
+| `vibestudio-modernisation-roadmap.md` | The "what to refactor next" backlog (Tier 0 = desktop/mobile/Claude) |
+| `vibestudio-architecture.md` | Pages, router, service layout, ports |
+| `vibestudio-auth.md` | dev_portal_token auth + httpOnly cookie + Bearer fallback |
+| `vibestudio-prompt-builder.md` | AI Prompt Builder — VibeStudio modules + templates |
+| `vibestudio-vibe-coding.md` | The 7-step prompt-to-production flow |
 
 ## Troubleshooting
 
