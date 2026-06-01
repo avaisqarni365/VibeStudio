@@ -15,7 +15,7 @@
 |---|---|---|
 | Auth | `POST /auth/login`, `/auth/logout`, `/auth/refresh`, `GET /auth/me` | sets/clears `dev_portal_token` |
 | Team | `GET /team`, `/team/:id`, `/team/:id/workload`, `/team/:id/activity`, `POST /team` | `requireRole('ceo','lead')` for writes |
-| Projects | `GET /projects`, `/projects/:projectId/{dashboard,tasks,sprints,members,wiki,activity,prompts,prompt-stats,cost-roi,active-sprint,code-notes}` | **project-scoped (multi-project)**; `cost-roi` (A7) = AI spend per task/sprint, costed with `budget.json` |
+| Projects | `GET /projects`, `/portfolio`, `GET/PUT /active-project`, `/projects/:projectId/{dashboard,tasks,sprints,members,wiki,activity,prompts,prompt-stats,cost-roi,active-sprint,code-notes}` | **viewer-scoped multi-project**: `GET /projects` + `/portfolio` return only the caller's linked projects, **except `ceo`** (super-admin) who sees all + can enter any workspace (RLS bypass, migration 087). `GET /active-project` resolves to a visible project (login landing); `PUT /active-project` 403s on an invisible one. `cost-roi` (A7) = AI spend per task/sprint, costed with `budget.json` |
 | Sprints | `GET /sprints/:id/{stats,tasks}`, `POST /projects/:projectId/sprints`, `PUT /sprints/:id` | |
 | Tasks | `GET /tasks/:id`, `GET /lists/:listId/tasks`, create/update/move, `GET/POST /tasks/:id/links`, `DELETE /task-links/:id` | board + list; `links` (A4) = commit/PR/CI refs for the task |
 | Spaces/Docs | `GET /spaces`, `/spaces/:id/{lists,docs}`, `/docs/:id` | ClickUp-style workspace |

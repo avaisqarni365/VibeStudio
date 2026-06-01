@@ -42,6 +42,7 @@ mapping, added features, and phased build order.
 - Complete feature catalog: `PROJECT_PLAN.md` (9 modules ↔ skill refs 01–10 + added A1–A10).
 
 ## Important Decisions
+- **Access model (2026-06-01):** `dev_projects` = workspaces; membership in `dev_project_members`. **`ceo` = super-admin** (sees all projects, enters any workspace) via an RLS bypass — GUC `app.current_dev_member_role='ceo'` in the `member_scope` policies (migration 087) + `requireProjectMembership(...,role)` short-circuit. Everyone else is scoped to linked projects (`listProjects`/`getPortfolioStats` take `(viewerId,role)`). Login lands on a visible project via `resolveActiveProjectId`. **New project-scoped routes MUST pass `req.devUser.role` to `requireProjectMembership`.** Per-member tables (prompt history, bookmarks, favorites, code notes, channels) are NOT bypassed.
 - **Electron over Tauri** for desktop (pure-JS, wraps Next.js directly).
 - **Fixed ports 3100/4100** in the packaged app (keeps `NEXT_PUBLIC_API_URL` + CORS consistent).
 - **API is esbuild-bundled, not tsc'd** — workspace `main` fields point at raw `.ts`.

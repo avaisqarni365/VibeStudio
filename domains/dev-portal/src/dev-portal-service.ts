@@ -59,6 +59,25 @@ export const devPortalService = {
     return member?.preferences?.active_project_id || null;
   },
 
+  /** Project ids the viewer may see/enter: all for ceo, else their memberships. */
+  async visibleProjectIds(viewerId: string, role?: string): Promise<string[]> {
+    const { db } = require('@vibestudio/database');
+    if (role === 'ceo') return db('dev_projects').pluck('id');
+    return db('dev_project_members').where('member_id', viewerId).whereNull('left_at').pluck('project_id');
+  },
+
+  /** Resolve the workspace to open on login: the stored active project if it's
+   *  still visible to the viewer, else their first visible project (persisted).
+   *  Guarantees the app always lands on a project the user can actually enter. */
+  async resolveActiveProjectId(viewerId: string, role?: string): Promise<string | null> {
+    const stored = await devPortalService.getActiveProjectId(viewerId);
+    const visible: string[] = await devPortalService.visibleProjectIds(viewerId, role);
+    if (stored && visible.includes(stored)) return stored;
+    const next = visible[0] || null;
+    if (next && next !== stored) { try { await devPortalService.setActiveProjectId(viewerId, next); } catch { /* non-fatal */ } }
+    return next;
+  },
+
   async setActiveProjectId(memberId: string, projectId: string) {
     const { db } = require('@vibestudio/database');
     const member = await db('dev_team_members').where({ id: memberId }).first();
@@ -101,9 +120,18 @@ export const devPortalService = {
   },
 
   // ── Projects ──
-  async listProjects() {
+  // Scoped to the viewer: a ceo (super-admin) sees every project; everyone else
+  // sees only the projects they're a member of. Called with the requester's id
+  // + role; defaults preserve "all" for internal/legacy callers.
+  async listProjects(viewerId?: string, role?: string) {
     const { db } = require('@vibestudio/database');
-    const projects = await db('dev_projects').orderBy('name');
+    let query = db('dev_projects').orderBy('name');
+    if (viewerId && role !== 'ceo') {
+      const ids = await devPortalService.visibleProjectIds(viewerId, role);
+      if (ids.length === 0) return [];
+      query = query.whereIn('id', ids);
+    }
+    const projects = await query;
     for (const p of projects) {
       const taskStats = await db('dev_tasks').where('project_id', p.id)
         .select(db.raw("count(*) as total, count(*) filter (where status = 'done') as done, count(*) filter (where status = 'in_progress') as in_progress"));
@@ -269,9 +297,15 @@ export const devPortalService = {
   },
 
   // Portfolio stats across all projects
-  async getPortfolioStats() {
+  async getPortfolioStats(viewerId?: string, role?: string) {
     const { db } = require('@vibestudio/database');
-    const projects = await db('dev_projects').where('status', 'active');
+    let pq = db('dev_projects').where('status', 'active');
+    if (viewerId && role !== 'ceo') {
+      const ids = await devPortalService.visibleProjectIds(viewerId, role);
+      if (ids.length === 0) return [];
+      pq = pq.whereIn('id', ids);
+    }
+    const projects = await pq;
     const result = [];
     for (const p of projects) {
       const tasks = await db('dev_tasks').where('project_id', p.id)

@@ -258,7 +258,10 @@ export default function DevPortalLayout({ children, user, title }: Props) {
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setShowProjectPicker(false)} />
                       <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 py-1 max-h-[300px] overflow-y-auto">
-                        <p className="px-3 py-1.5 text-2xs text-gray-400 font-semibold uppercase">Switch Project</p>
+                        <p className="px-3 py-1.5 text-2xs text-gray-400 font-semibold uppercase flex items-center justify-between">
+                          <span>Switch Project</span>
+                          {user?.role === 'ceo' && <span className="text-indigo-500 normal-case font-medium">All projects · admin</span>}
+                        </p>
                         {projects.map(p => (
                           <button key={p.id} onClick={() => switchProject(p.id)}
                             className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 transition-colors ${p.id === activeProjectId ? 'bg-indigo-50' : ''}`}>

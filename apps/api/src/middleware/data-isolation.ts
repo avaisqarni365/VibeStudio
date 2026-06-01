@@ -15,6 +15,7 @@ import { knexBase, dbStore } from "@vibestudio/database";
 
 export function withRlsTransaction(req: any, res: any, next: any): void {
   const memberId = req.devUser?.devMemberId;
+  const memberRole = req.devUser?.role;
 
   knexBase
     .transaction(
@@ -29,6 +30,8 @@ export function withRlsTransaction(req: any, res: any, next: any): void {
             if (memberId) {
               // SET LOCAL (transaction-scoped) so pooled connections don't leak context.
               await trx.raw("SELECT set_config('app.current_dev_member_id', ?, true)", [String(memberId)]);
+              // Role GUC drives the CEO super-admin RLS bypass (migration 087).
+              await trx.raw("SELECT set_config('app.current_dev_member_role', ?, true)", [String(memberRole || "")]);
             }
             // Run the remainder of the request within the trx's ALS scope.
             dbStore.run({ trx }, () => next());

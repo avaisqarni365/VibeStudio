@@ -188,8 +188,11 @@ async function requireChannelMembership(channelId: string, memberId: string, res
   return true;
 }
 
-/** Verify project membership via dev_project_members; throws 403 if not a member. */
-async function requireProjectMembership(projectId: string, memberId: string, res: any): Promise<boolean> {
+/** Verify project membership via dev_project_members; throws 403 if not a member.
+ *  The `ceo` role is the super-admin and bypasses membership (can enter any
+ *  workspace) — this mirrors the RLS bypass in migration 087. */
+async function requireProjectMembership(projectId: string, memberId: string, res: any, role?: string): Promise<boolean> {
+  if (role === 'ceo') return true;
   const { db } = require('@vibestudio/database');
   const row = await db('dev_project_members').where({ project_id: projectId, member_id: memberId }).first();
   if (!row) { res.status(403).json({ success: false, error: { code: 'NOT_PROJECT_MEMBER', message: 'You are not a member of this project' } }); return false; }
@@ -475,18 +478,28 @@ router.get('/team/:id/activity', devAuth, async (req: any, res) => {
 
 // ── Projects ──
 router.get('/projects', devAuth, async (req: any, res) => {
-  try { res.json({ success: true, data: await devPortalService.listProjects() }); }
+  // Scoped: ceo (super-admin) sees all; everyone else sees only their linked projects.
+  try { res.json({ success: true, data: await devPortalService.listProjects(req.devUser.devMemberId, req.devUser.role) }); }
   catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to list projects' } }); }
 });
 
 router.get('/active-project', devAuth, async (req: any, res) => {
-  try { res.json({ success: true, data: { active_project_id: await devPortalService.getActiveProjectId(req.devUser.devMemberId) } }); }
+  // Resolve to a project the viewer can actually enter (their linked workspace),
+  // so login always lands somewhere valid.
+  try { res.json({ success: true, data: { active_project_id: await devPortalService.resolveActiveProjectId(req.devUser.devMemberId, req.devUser.role) } }); }
   catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed' } }); }
 });
 
 router.put('/active-project', devAuth, async (req: any, res) => {
-  try { res.json({ success: true, data: await devPortalService.setActiveProjectId(req.devUser.devMemberId, req.body.project_id) }); }
-  catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed' } }); }
+  try {
+    const projectId = req.body.project_id;
+    // Can't switch into a workspace you can't see (non-ceo, non-member).
+    const visible = await devPortalService.visibleProjectIds(req.devUser.devMemberId, req.devUser.role);
+    if (!projectId || !visible.includes(projectId)) {
+      return res.status(403).json({ success: false, error: { code: 'NOT_PROJECT_MEMBER', message: 'You cannot switch to a project you are not a member of' } });
+    }
+    res.json({ success: true, data: await devPortalService.setActiveProjectId(req.devUser.devMemberId, projectId) });
+  } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed' } }); }
 });
 
 router.post('/projects', devAuth, requireRole('ceo', 'lead'), async (req: any, res) => {
@@ -541,7 +554,7 @@ router.put('/projects/:projectId/members/:memberId', devAuth, requireRole('ceo',
 });
 
 router.get('/portfolio', devAuth, async (req: any, res) => {
-  try { res.json({ success: true, data: await devPortalService.getPortfolioStats() }); }
+  try { res.json({ success: true, data: await devPortalService.getPortfolioStats(req.devUser.devMemberId, req.devUser.role) }); }
   catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to get portfolio' } }); }
 });
 
@@ -582,7 +595,7 @@ router.post('/tasks/:id/time-log', devAuth, async (req: any, res) => {
     if (!hours || hours <= 0 || hours > 24) return res.status(400).json({ success: false, error: { code: 'INVALID_HOURS', message: 'hours must be between 0 and 24' } });
     const task = await devPortalService.getTask(req.params.id);
     if (!task) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
-    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: await devPortalService.logTimeOnTask(req.params.id, hours, req.devUser.devMemberId) });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to log time' } }); }
 });
@@ -597,7 +610,7 @@ router.post('/sprints/:id/bulk-move', devAuth, async (req: any, res) => {
       if (sprintId) {
         const sprint = await db('dev_sprints').where({ id: sprintId }).first();
         if (sprint?.project_id) {
-          if (!await requireProjectMembership(sprint.project_id, req.devUser.devMemberId, res)) return;
+          if (!await requireProjectMembership(sprint.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
           // Ensure all tasks belong to this project
           const tasks = await db('dev_tasks').whereIn('id', taskIds).select('project_id');
           const crossProject = tasks.some((t: any) => t.project_id && t.project_id !== sprint.project_id);
@@ -618,7 +631,7 @@ router.get('/projects/:projectId/tasks', devAuth, async (req: any, res) => {
 
 router.post('/projects/:projectId/tasks', devAuth, async (req: any, res) => {
   try {
-    if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res)) return;
+    if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: await devPortalService.createTask(req.params.projectId, req.body, req.devUser.devMemberId) });
   } catch (error) { logger.error('Create task error', error as Error); res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to create task' } }); }
 });
@@ -627,7 +640,7 @@ router.get('/tasks/:id', devAuth, async (req: any, res) => {
   try {
     const task = await devPortalService.getTask(req.params.id);
     if (!task) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
-    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: task });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to get task' } }); }
 });
@@ -636,7 +649,7 @@ router.put('/tasks/:id', devAuth, async (req: any, res) => {
   try {
     const task = await devPortalService.getTask(req.params.id);
     if (!task) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
-    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: await devPortalService.updateTask(req.params.id, req.body, req.devUser.devMemberId) });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to update task' } }); }
 });
@@ -646,7 +659,7 @@ router.post('/tasks/:id/comments', devAuth, async (req: any, res) => {
   try {
     const task = await devPortalService.getTask(req.params.id);
     if (!task) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
-    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: await devPortalService.addComment(req.params.id, req.devUser.devMemberId, req.body.content, req.body.type) });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to add comment' } }); }
 });
@@ -656,7 +669,7 @@ router.get('/tasks/:id/links', devAuth, async (req: any, res) => {
   try {
     const task = await devPortalService.getTask(req.params.id);
     if (!task) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
-    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: await devPortalService.getTaskLinks(req.params.id) });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to get task links' } }); }
 });
@@ -665,7 +678,7 @@ router.post('/tasks/:id/links', devAuth, async (req: any, res) => {
   try {
     const task = await devPortalService.getTask(req.params.id);
     if (!task) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
-    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: await devPortalService.upsertTaskLink(req.params.id, req.body, req.devUser.devMemberId) });
   } catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to add link' } }); }
 });
@@ -676,7 +689,7 @@ router.delete('/task-links/:id', devAuth, async (req: any, res) => {
     const link = await db('dev_task_links').where({ id: req.params.id }).first();
     if (!link) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Link not found' } });
     const task = await devPortalService.getTask(link.task_id);
-    if (task?.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    if (task?.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: await devPortalService.deleteTaskLink(req.params.id) });
   } catch (error: any) { res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to delete link' } }); }
 });
@@ -715,7 +728,7 @@ router.get('/wiki/:id', devAuth, async (req: any, res) => {
   try {
     const page = await devPortalService.getWikiPage(req.params.id);
     if (!page) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Wiki page not found' } });
-    if (page.project_id && !await requireProjectMembership(page.project_id, req.devUser.devMemberId, res)) return;
+    if (page.project_id && !await requireProjectMembership(page.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: page });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to get wiki page' } }); }
 });
@@ -724,7 +737,7 @@ router.put('/wiki/:id', devAuth, async (req: any, res) => {
   try {
     const page = await devPortalService.getWikiPage(req.params.id);
     if (!page) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Wiki page not found' } });
-    if (page.project_id && !await requireProjectMembership(page.project_id, req.devUser.devMemberId, res)) return;
+    if (page.project_id && !await requireProjectMembership(page.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: await devPortalService.updateWikiPage(req.params.id, req.body, req.devUser.devMemberId) });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to update wiki page' } }); }
 });
@@ -733,7 +746,7 @@ router.delete('/wiki/:id', devAuth, requireRole('ceo', 'lead', 'product_owner'),
   try {
     const page = await devPortalService.getWikiPage(req.params.id);
     if (!page) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Wiki page not found' } });
-    if (page.project_id && !await requireProjectMembership(page.project_id, req.devUser.devMemberId, res)) return;
+    if (page.project_id && !await requireProjectMembership(page.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: await devPortalService.deleteWikiPage(req.params.id, req.devUser.devMemberId) });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to delete wiki page' } }); }
 });
@@ -989,7 +1002,7 @@ function parseDevice(req: any) {
 
 router.get('/projects/:projectId/prompts', devAuth, async (req: any, res) => {
   try {
-    if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res)) return;
+    if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res, req.devUser.role)) return;
     // Only return own prompts + shared prompts
     const prompts = await devPortalService.listPrompts(req.params.projectId, req.query);
     const filtered = (prompts || []).filter((p: any) => p.member_id === req.devUser.devMemberId || p.is_shared);
@@ -1019,18 +1032,18 @@ async function experimentMembership(experimentId: string, req: any, res: any) {
   const { db } = require('@vibestudio/database');
   const exp = await db('dev_prompt_experiments').where({ id: experimentId }).first();
   if (!exp) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Experiment not found' } }); return null; }
-  if (exp.project_id && !await requireProjectMembership(exp.project_id, req.devUser.devMemberId, res)) return null;
+  if (exp.project_id && !await requireProjectMembership(exp.project_id, req.devUser.devMemberId, res, req.devUser.role)) return null;
   return exp;
 }
 
 router.post('/projects/:projectId/experiments', devAuth, async (req: any, res) => {
-  if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res)) return;
+  if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res, req.devUser.role)) return;
   try { res.json({ success: true, data: await devPortalService.createExperiment(req.params.projectId, req.body, req.devUser.devMemberId) }); }
   catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to create experiment' } }); }
 });
 
 router.get('/projects/:projectId/experiments', devAuth, async (req: any, res) => {
-  if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res)) return;
+  if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res, req.devUser.role)) return;
   try { res.json({ success: true, data: await devPortalService.listExperiments(req.params.projectId) }); }
   catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to list experiments' } }); }
 });
@@ -1082,7 +1095,7 @@ router.get('/prompts/:id', devAuth, async (req: any, res) => {
     if (!prompt) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND' } });
     // Must be own prompt or shared; and member of the project
     if (prompt.member_id !== req.devUser.devMemberId && !prompt.is_shared) return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Access denied' } });
-    if (prompt.project_id && !await requireProjectMembership(prompt.project_id, req.devUser.devMemberId, res)) return;
+    if (prompt.project_id && !await requireProjectMembership(prompt.project_id, req.devUser.devMemberId, res, req.devUser.role)) return;
     res.json({ success: true, data: prompt });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to get prompt' } }); }
 });

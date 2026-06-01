@@ -35,6 +35,23 @@ fallback and 401 in some browsers.
 `ceo`, `lead`, `product_owner`, plus AI agent roles (`agent_*` /
 `ai_agent`). Writes are typically `requireRole('ceo', 'lead', ...)`.
 
+**`ceo` is the super-admin.** It sees **all** projects and can enter **any**
+workspace (read + write its tasks/sprints/wiki) regardless of
+`dev_project_members`. This is enforced in two places that must stay in sync:
+the RLS policies (`app.current_dev_member_role = 'ceo'` bypass, migration 087)
+and the route guard `requireProjectMembership(..., role)` (short-circuits for
+`ceo`). Everyone else is scoped to the projects they're a member of — including
+the `/projects` and `/portfolio` lists (`listProjects`/`getPortfolioStats` take
+`(viewerId, role)`).
+
+## Login → workspace landing
+
+After login the app loads `GET /active-project`, which returns the member's
+stored `preferences.active_project_id` **iff** it's still a project they can see,
+otherwise their first visible (linked) project — so a user always lands in a
+workspace they can actually enter. `PUT /active-project` rejects switching to a
+project the viewer can't see (non-CEO, non-member → 403).
+
 ## DO NOT
 
 - Do NOT validate `acca_token` or import any ACCA auth — it doesn't exist here.

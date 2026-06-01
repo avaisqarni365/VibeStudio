@@ -5,6 +5,19 @@ problem · root cause · fix (files) · result · regression risk · follow-up.
 
 ---
 
+### 2026-06-01 · Multi-project workspaces + CEO super-admin (design "the right way")
+- **Tool/model:** Claude Code (Opus 4.8). Local PostgreSQL 17, RLS enabled. Verified via the live API + psql.
+- **Problem / need:** the studio's access model was wrong. `listProjects()`/`getPortfolioStats()` returned **every** project to **everyone** (no "projects I belong to"), while FORCE-RLS (079) scoped `dev_tasks`/`dev_sprints`/`dev_wiki_pages` to `dev_project_members` with **no super-admin** — so the CEO opened any non-member workspace to an **empty** board. Desired: regular users see/land on only their linked projects; the `ceo` role sees all projects and can enter any workspace.
+- **Design (role-aware RLS bypass, not CEO auto-enrolment):**
+  1. **Migration 087** recreates the `member_scope` policies on the 3 project tables as `(current_setting('app.current_dev_member_role',true)='ceo') OR <079 membership expr>` for both USING + WITH CHECK. Per-member tables (prompt history, bookmarks, favorites, code notes, channel members) left strictly per-member.
+  2. **Middleware** (`data-isolation.ts`) sets the new GUC `app.current_dev_member_role` from `req.devUser.role` alongside the member id.
+  3. **Route guard** `requireProjectMembership(projectId, memberId, res, role)` short-circuits for `ceo`; all ~22 call sites pass `req.devUser.role`.
+  4. **Service** `listProjects`/`getPortfolioStats` take `(viewerId, role)` → membership-scoped unless `ceo`; new `resolveActiveProjectId`/`visibleProjectIds`. `GET /active-project` resolves to a visible project (login lands in a real workspace); `PUT /active-project` 403s on an invisible project.
+  5. **Frontend** project switcher shows an "All projects · admin" label for `ceo`.
+- **Result:** ✅ verified end-to-end with a throwaway `ALPHA` project (member `alex`, excluding CEO + `maria`): CEO `/projects` = {ALPHA, VIBE} and reads ALPHA's task; `maria` `/projects` = {VIBE} only, `PUT /active-project ALPHA` → 403, ALPHA tasks empty. WITH CHECK proven at the SQL layer as the non-superuser `vibestudio` role: ceo-GUC insert into ALPHA **succeeds**, developer-GUC insert **rejected** by RLS. All test data removed; CEO active project reset to VIBE.
+- **Regression risk:** medium (touches RLS + ~22 guard call sites). Mitigated: bypass is additive (membership path unchanged), per-member tables untouched, idempotent migration with a clean `down`. **When adding a project-scoped route, pass `req.devUser.role` to `requireProjectMembership`.**
+- **Follow-up:** seed a 2nd demo project with limited membership to showcase the model; optional dedicated `admin` role later.
+
 ### 2026-06-01 · "Linked to ACCA" — incomplete de-ACCA extraction (branding + admin links + project link)
 - **Tool/model:** Claude Code (Opus 4.8). Local PostgreSQL 17. Verified against the running dev stack (web :3100, api :4100) + Electron desktop shell.
 - **Problem:** running the desktop app, the user landed on an **invoice / AR-AP / OCR screen** and reported VibeStudio "still linked to ACCA / project management + link-of-projects only shows ACCA". VibeStudio is meant to be a fully independent product with no accounting concepts.

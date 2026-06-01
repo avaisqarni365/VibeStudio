@@ -71,6 +71,7 @@ description: "Use when working with VibeStudio's Postgres schema — 29 tables a
 | 084 | `084_dev_prompt_actor_columns.js` | `provider`/`ai_origin`/`actor_email`/`actor_role` on `dev_prompt_history` (were missing — ACCA migration 130 never extracted; `/me/usage` needs them) |
 | 085 | `085_dev_task_links.js` | A4 commit/PR/CI ↔ task bridge — `dev_task_links` table |
 | 086 | `086_dev_prompt_experiments.js` | A3 prompt A/B — `dev_prompt_experiments` + `dev_prompt_variants` |
+| 087 | `087_dev_portal_rls_ceo_bypass.js` | CEO super-admin RLS bypass on `dev_tasks`/`dev_sprints`/`dev_wiki_pages` |
 
 **Final state:** RLS enabled. The GUC the policies read is
 **`app.current_dev_member_id`** (migrations 070/078/079) — NOT
@@ -81,10 +82,12 @@ await trx.raw(`SELECT set_config('app.current_dev_member_id', ?, true)`, [member
 ```
 
 The API sets this automatically in `apps/api/src/middleware/data-isolation.ts`
-(`withRlsTransaction`, mounted by `devAuth`). The `db` proxy in
-`@vibestudio/database` routes queries through the request trx via `dbStore`
-(AsyncLocalStorage). **Note:** `npm run db:seed` does NOT set this — seed under
-RLS needs the GUC set or run as a superuser (RLS bypass).
+(`withRlsTransaction`, mounted by `devAuth`). It also sets a second GUC
+**`app.current_dev_member_role`** (the requester's role) — read by the CEO
+super-admin bypass (see below). The `db` proxy in `@vibestudio/database` routes
+queries through the request trx via `dbStore` (AsyncLocalStorage). **Note:**
+`npm run db:seed` does NOT set these — seed under RLS needs the GUC set or run as
+a superuser (RLS bypass).
 
 (NOT `app.current_org_id` — that was ACCA's tenant column. VibeStudio
 isn't multi-tenant.)
@@ -97,6 +100,17 @@ empty). The seed must enroll members (`005` now does). When adding a
 project-scoped read, remember the gate is the `dev_project_members` row, not
 just `devAuth`. `dev_prompt_history` is *not* force-RLS, so prompt aggregates
 can appear even when the task join behind them returns nothing.
+
+**CEO super-admin bypass (migration 087):** the `member_scope` policies on
+`dev_tasks`/`dev_sprints`/`dev_wiki_pages` are `(app.current_dev_member_role =
+'ceo') OR <membership>` for both USING and WITH CHECK — so the `ceo` role sees
+and writes **every** project (enters any workspace) without a `dev_project_members`
+row. Everyone else is still membership-scoped. The route-level twin is
+`requireProjectMembership(projectId, memberId, res, role)` which short-circuits
+for `ceo`. Per-member tables (prompt history, bookmarks, favorites, code notes,
+channel members) are **not** bypassed — they stay strictly per-member even for the CEO.
+Project list scoping lives in the service (`listProjects`/`getPortfolioStats`
+take `(viewerId, role)`): non-CEO sees only linked projects; CEO sees all.
 
 ## Seed
 
@@ -151,7 +165,7 @@ GROUP BY m, author_id;
 
 - Never edit a shipped migration — write a new one
 - Migration files are numbered `NNN_<slug>.js`
-- Next migration number: **087**
+- Next migration number: **088**
 
 ## Local development DB (one command)
 
