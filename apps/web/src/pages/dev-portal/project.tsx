@@ -12,8 +12,12 @@ export default function DevPortalProject() {
   const [wikiPage, setWikiPage] = useState<any>(null);
   const [syncing, setSyncing] = useState(false);
   const [projectId, setProjectId] = useState('');
-  const [tab, setTab] = useState<'overview' | 'routes' | 'domains' | 'pages' | 'migrations'>('overview');
+  const [tab, setTab] = useState<'overview' | 'routes' | 'domains' | 'pages' | 'migrations' | 'cost'>('overview');
   const [search, setSearch] = useState('');
+  const [roi, setRoi] = useState<any>(null);
+  const [roiLoading, setRoiLoading] = useState(false);
+
+  const fmtUsd = (n: number) => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: n < 1 ? 4 : 2, maximumFractionDigits: n < 1 ? 4 : 2 });
 
   useEffect(() => {
     if (!user) return;
@@ -33,6 +37,18 @@ export default function DevPortalProject() {
       });
     }
   }, [user, activeProjectId]);
+
+  // Lazily load cost-per-feature ROI when the Cost tab is opened.
+  useEffect(() => {
+    if (tab !== 'cost' || !projectId || roi) return;
+    setRoiLoading(true);
+    devApi('get', `/projects/${projectId}/cost-roi`)
+      .then(r => setRoi(r.data.data))
+      .catch(() => setRoi({ totalCost: 0, tasks: [], sprints: [], untracked: { cost: 0, prompts: 0 } }))
+      .finally(() => setRoiLoading(false));
+  }, [tab, projectId]);
+  // Reset ROI when switching projects so the next open refetches.
+  useEffect(() => { setRoi(null); }, [projectId]);
 
   const syncAndReload = async () => {
     if (!projectId) return;
@@ -84,12 +100,13 @@ export default function DevPortalProject() {
             { key: 'domains', label: `Domains (${scan?.domains?.length || 0})` },
             { key: 'pages', label: `Pages (${scan?.pages?.length || 0})` },
             { key: 'migrations', label: `Migrations (${scan?.migrations?.length || 0})` },
+            { key: 'cost', label: 'Cost ROI' },
           ].map(t => (
             <button key={t.key} onClick={() => setTab(t.key as any)} className={`px-4 py-2 text-xs font-medium rounded-t-lg -mb-px ${tab === t.key ? 'bg-white border border-gray-200 border-b-white text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}>{t.label}</button>
           ))}
         </div>
 
-        {tab !== 'overview' && (
+        {tab !== 'overview' && tab !== 'cost' && (
           <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter..." className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs placeholder-gray-400 focus:ring-2 focus:ring-indigo-500/20" />
         )}
 
@@ -195,6 +212,67 @@ export default function DevPortalProject() {
               </div>
             ))}
           </div>
+        )}
+
+        {/* Cost ROI Tab — AI spend per feature (task) and per sprint */}
+        {tab === 'cost' && (
+          roiLoading ? (
+            <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-xs text-gray-400">Computing cost per feature…</div>
+          ) : !roi ? null : (
+            <div className="space-y-4">
+              {/* Totals */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {[
+                  ['Total AI spend', fmtUsd(roi.totalCost), 'rose'],
+                  ['Tracked tasks', String(roi.tasks?.length || 0), 'indigo'],
+                  ['Sprints', String(roi.sprints?.length || 0), 'emerald'],
+                  ['Untracked spend', fmtUsd(roi.untracked?.cost || 0), 'amber'],
+                ].map(([l, v, c]) => (
+                  <div key={l as string} className={`bg-${c}-50 border border-${c}-100 rounded-xl p-3`}>
+                    <p className="text-lg font-bold text-gray-900">{v}</p><p className="text-2xs text-gray-500">{l}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-2xs text-gray-400 -mt-1">
+                Spend = AI prompts in this project, costed with <span className="font-mono">.claude/cost-tracking/budget.json</span> prices. Link prompts to a task (<span className="font-mono">task_id</span>) so they leave the “untracked” bucket.
+              </p>
+
+              {/* Per-sprint cost / cost-per-point */}
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-2 border-b border-gray-100"><h3 className="text-xs font-semibold text-gray-700">Cost by sprint</h3></div>
+                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-4 py-2 border-b border-gray-100 text-2xs text-gray-400 font-semibold uppercase">
+                  <span>Sprint</span><span>Tasks</span><span>Points</span><span>Cost / pt</span>
+                </div>
+                {(roi.sprints || []).length === 0 && <div className="px-4 py-3 text-2xs text-gray-400">No sprint-linked spend yet.</div>}
+                {(roi.sprints || []).map((s: any) => (
+                  <div key={s.sprint_id || s.sprint} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-4 py-2 border-b border-gray-50 hover:bg-gray-50 items-center">
+                    <span className="text-xs font-medium text-gray-800">{s.sprint} · <span className="text-rose-600 font-semibold">{fmtUsd(s.cost)}</span></span>
+                    <span className="text-2xs text-gray-500 text-right">{s.tasks}</span>
+                    <span className="text-2xs text-gray-500 text-right">{s.points || '—'}</span>
+                    <span className="text-2xs font-mono text-gray-700 text-right">{s.cost_per_point != null ? fmtUsd(s.cost_per_point) : '—'}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Top tasks (features) by cost */}
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-2 border-b border-gray-100"><h3 className="text-xs font-semibold text-gray-700">Top features by AI spend</h3></div>
+                <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-3 px-4 py-2 border-b border-gray-100 text-2xs text-gray-400 font-semibold uppercase">
+                  <span>Key</span><span>Feature</span><span>Prompts</span><span>Pts</span><span>Cost</span>
+                </div>
+                {(roi.tasks || []).length === 0 && <div className="px-4 py-3 text-2xs text-gray-400">No task-linked AI spend yet.</div>}
+                {(roi.tasks || []).map((t: any) => (
+                  <div key={t.id} className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-3 px-4 py-2 border-b border-gray-50 hover:bg-gray-50 items-center">
+                    <span className="text-2xs font-mono font-bold text-indigo-600">{t.task_key || '—'}</span>
+                    <span className="text-xs text-gray-800 truncate" title={t.title}>{t.title}{t.status && <span className="ml-1.5 text-2xs text-gray-400">· {t.status}</span>}</span>
+                    <span className="text-2xs text-gray-500 text-right">{t.prompts}</span>
+                    <span className="text-2xs text-gray-500 text-right">{t.story_points || '—'}</span>
+                    <span className="text-xs font-semibold text-rose-600 text-right">{fmtUsd(t.cost)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
         )}
       </div>
     </DevPortalLayout>

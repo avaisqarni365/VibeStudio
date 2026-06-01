@@ -48,6 +48,18 @@ exports.seed = async function(knex) {
   const everyone = [ceo, sarah, alex, maria, tom, lisa, ...allAgents];
   console.log('Team members ready:', everyone.length);
 
+  // ── Project membership (REQUIRED for RLS) ──
+  // `dev_tasks`/`dev_sprints` enforce member-scope RLS (FORCE) via
+  // `dev_project_members`. Without these rows the board, tasks, and Cost ROI are
+  // empty for everyone once RLS is enabled. Enroll the whole team on the project.
+  for (const m of everyone.filter(Boolean)) {
+    const projRole = m.role === 'ceo' ? 'owner' : m.role === 'lead' ? 'lead' : 'member';
+    await knex('dev_project_members')
+      .insert({ project_id: project.id, member_id: m.id, role: projRole })
+      .onConflict(['project_id', 'member_id']).ignore();
+  }
+  console.log('Project members ensured for project:', project.id);
+
   // ── Sprints ──
   let sprint2 = await knex('dev_sprints').where({ project_id: project.id, sprint_number: 2 }).first();
   if (!sprint2) {

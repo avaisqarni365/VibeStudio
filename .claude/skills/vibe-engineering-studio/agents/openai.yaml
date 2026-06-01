@@ -1,0 +1,14 @@
+interface:
+  display_name: Vibe Engineering Studio
+  short_description: Plan, prompt, track, and govern AI-assisted software projects.
+  icon: code
+  brand_color: '#4f46e5'
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

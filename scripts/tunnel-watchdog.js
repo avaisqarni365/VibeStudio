@@ -9,7 +9,7 @@
  * it in the first place — fixing the recurring "disconnected from remote
  * database" failure at the source.
  *
- * Lifecycle ("dev only"): it watches the dev ports (API 4000 / web 3000).
+ * Lifecycle ("dev only"): it watches the dev ports (API 4100 / web 3100).
  * After a startup grace it exits once those ports have been gone for a while,
  * so stopping `npm run dev` cleans the watchdog up too. It is a singleton —
  * a lockfile prevents a second watchdog from starting.
@@ -26,9 +26,9 @@ const { ensureHealthy } = require("./tunnel-lib");
 const PROBE_INTERVAL_MS = 30_000;   // re-check + keepalive cadence
 const STARTUP_GRACE_MS = 120_000;   // give dev time to boot before life-checks
 const DEV_IDLE_EXIT_MS = 120_000;   // exit once dev ports gone this long
-const DEV_PORTS = [4000, 3000];
+const DEV_PORTS = [4100, 3100];
 
-const LOG_DIR = path.join(os.tmpdir(), "acca-tunnel");
+const LOG_DIR = path.join(os.tmpdir(), "vibestudio-tunnel");
 const LOG_FILE = path.join(LOG_DIR, "watchdog.log");
 const LOCK_FILE = path.join(LOG_DIR, "watchdog.lock");
 

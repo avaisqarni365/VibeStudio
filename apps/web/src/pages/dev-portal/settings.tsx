@@ -12,7 +12,7 @@ const TABS = [
   { key: 'github', label: 'GitHub / Git', icon: '🔗' },
 ];
 
-// TODO: replace with the real ACCA design-system Figma URL.
+// Set NEXT_PUBLIC_FIGMA_DESIGN_SYSTEM_URL to your design-system Figma file.
 // Must be a valid Figma file URL: https://www.figma.com/(file|design|proto)/<KEY>/<slug>
 const FIGMA_DESIGN_SYSTEM_URL = process.env.NEXT_PUBLIC_FIGMA_DESIGN_SYSTEM_URL || '';
 
@@ -20,7 +20,7 @@ const isValidFigmaUrl = (url: string): boolean =>
   /^https:\/\/(www\.)?figma\.com\/(file|design|proto)\/[A-Za-z0-9]+(\/|$)/.test(url);
 
 const buildFigmaEmbedSrc = (url: string): string =>
-  `https://www.figma.com/embed?embed_host=acca-dev-portal&url=${encodeURIComponent(url)}`;
+  `https://www.figma.com/embed?embed_host=vibestudio&url=${encodeURIComponent(url)}`;
 
 const VERSION_HISTORY = [
   { version: 'v1.0.0', date: '2026-05-31', status: 'current', sessions: '—', changes: ['Extracted into the standalone VibeStudio repo','Removed all accounting concepts (SKR03, journal entries, VAT, GoBD)','Config + DB repointed to vibestudio (ports 3100/4100, tunnel 5545)','AI Prompt Builder repointed to VibeStudio modules','VibeStudio-native Claude skills','Roadmap: standalone desktop (.exe) + mobile + Claude integration'] },
@@ -251,7 +251,7 @@ export default function DevPortalSettings() {
           {tab === 'design' && (
             <div className="space-y-5">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-bold text-gray-900">ACCA Design System</h2>
+                <h2 className="text-sm font-bold text-gray-900">VibeStudio Design System</h2>
                 {isValidFigmaUrl(FIGMA_DESIGN_SYSTEM_URL) && (
                   <a href={FIGMA_DESIGN_SYSTEM_URL} target="_blank" rel="noopener noreferrer"
                     className="px-4 py-2 bg-[#0D99FF] hover:bg-[#0B85DE] text-white text-xs font-semibold rounded-lg flex items-center gap-2 transition-colors">
@@ -265,7 +265,7 @@ export default function DevPortalSettings() {
               <div className="border border-gray-200 rounded-xl overflow-hidden">
                 <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center gap-2">
                   <svg className="w-4 h-4 text-[#0D99FF]" viewBox="0 0 38 57" fill="currentColor"><path d="M19 28.5a9.5 9.5 0 1 1 19 0 9.5 9.5 0 0 1-19 0z"/><path d="M0 47.5A9.5 9.5 0 0 1 9.5 38H19v9.5a9.5 9.5 0 1 1-19 0z"/><path d="M19 0v19h9.5a9.5 9.5 0 1 0 0-19H19z"/><path d="M0 9.5A9.5 9.5 0 0 0 9.5 19H19V0H9.5A9.5 9.5 0 0 0 0 9.5z"/><path d="M0 28.5A9.5 9.5 0 0 0 9.5 38H19V19H9.5A9.5 9.5 0 0 0 0 28.5z"/></svg>
-                  <span className="text-xs font-semibold text-gray-700">ACCA Design System — Figma</span>
+                  <span className="text-xs font-semibold text-gray-700">VibeStudio Design System — Figma</span>
                   {isValidFigmaUrl(FIGMA_DESIGN_SYSTEM_URL) && (
                     <a href={FIGMA_DESIGN_SYSTEM_URL} target="_blank" rel="noopener noreferrer" className="ml-auto text-2xs text-indigo-500 hover:text-indigo-700">Open full screen</a>
                   )}
@@ -273,7 +273,7 @@ export default function DevPortalSettings() {
                 {isValidFigmaUrl(FIGMA_DESIGN_SYSTEM_URL) ? (
                   <iframe
                     src={buildFigmaEmbedSrc(FIGMA_DESIGN_SYSTEM_URL)}
-                    title="ACCA Design System — Figma"
+                    title="VibeStudio Design System — Figma"
                     className="w-full h-[500px] border-0"
                     allowFullScreen
                   />
@@ -353,8 +353,8 @@ export default function DevPortalSettings() {
                 <h3 className="text-xs font-semibold text-gray-700 mb-3">Design Principles</h3>
                 <div className="grid grid-cols-2 gap-3">
                   {[
-                    { title: 'Claude.ai-Inspired Minimalism', desc: 'Clean, warm, professional. Sand background with terracotta accents for main platform, indigo for dev portal.' },
-                    { title: 'German Business Context', desc: 'Formal tone, de-DE locale defaults, EUR currency, German date format (dd.MM.yyyy).' },
+                    { title: 'Claude.ai-Inspired Minimalism', desc: 'Clean, warm, professional. Indigo accents on a light neutral background.' },
+                    { title: 'Developer-First', desc: 'English-only, keyboard-friendly, dense data screens built for engineers and AI agents.' },
                     { title: 'Density over Whitespace', desc: 'Data-rich screens. Small text (text-xs, text-2xs), compact spacing. More info per viewport.' },
                     { title: 'Rounded-xl Everything', desc: 'Cards, buttons, badges, inputs all use rounded-xl (12px). Consistent border-gray-200.' },
                   ].map(p => (
@@ -425,28 +425,28 @@ export default function DevPortalSettings() {
               <h2 className="text-sm font-bold text-gray-900">Git & GitHub</h2>
               <div className="bg-gray-900 rounded-xl p-4">
                 <pre className="text-2xs text-gray-300 font-mono whitespace-pre-wrap">{`# Setup
-cd D:/ACCA && git init
-git add . && git commit -m "ACCA v3.0.0"
+cd D:/VibeStudio && git init
+git add . && git commit -m "VibeStudio v0.1.0"
 git remote add origin https://github.com/codes-ai/vibestudio.git
 git push -u origin main
 
 # Branch strategy
 main         production-ready
 develop      integration
-feat/ACCA-*  features (from task key)
-fix/ACCA-*   bugfixes
+feat/VIBE-*  features (from task key)
+fix/VIBE-*   bugfixes
 release/*    release candidates`}</pre>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="border border-gray-200 rounded-xl p-4">
                   <h3 className="text-xs font-semibold text-gray-700 mb-2">Commit Convention</h3>
                   <div className="space-y-1 text-2xs font-mono text-gray-600">
-                    <p><span className="text-emerald-600">feat:</span> Add budget mgmt (ACCA-42)</p>
-                    <p><span className="text-red-600">fix:</span> VAT Skonto calc (ACCA-15)</p>
+                    <p><span className="text-emerald-600">feat:</span> Add cost ROI tab (VIBE-42)</p>
+                    <p><span className="text-red-600">fix:</span> Prompt A/B rating (VIBE-15)</p>
                     <p><span className="text-blue-600">refactor:</span> Extract api-client</p>
                     <p><span className="text-purple-600">docs:</span> Update developer guide</p>
-                    <p><span className="text-amber-600">chore:</span> Migration 049</p>
-                    <p><span className="text-cyan-600">test:</span> E2E invoice flow</p>
+                    <p><span className="text-amber-600">chore:</span> Migration 087</p>
+                    <p><span className="text-cyan-600">test:</span> E2E prompt flow</p>
                   </div>
                 </div>
                 <div className="border border-gray-200 rounded-xl p-4">
@@ -459,9 +459,9 @@ release/*    release candidates`}</pre>
               <div className="border border-gray-200 rounded-xl p-4">
                 <h3 className="text-xs font-semibold text-gray-700 mb-2">Task → Branch Naming</h3>
                 <div className="space-y-1 text-2xs font-mono text-gray-600">
-                  <p>ACCA-42 → <span className="text-indigo-600">feat/acca-42-budget-management</span></p>
-                  <p>ACCA-15 → <span className="text-indigo-600">fix/acca-15-vat-skonto</span></p>
-                  <p>ACCA-30 → <span className="text-indigo-600">chore/acca-30-security-audit</span></p>
+                  <p>VIBE-42 → <span className="text-indigo-600">feat/vibe-42-cost-roi-tab</span></p>
+                  <p>VIBE-15 → <span className="text-indigo-600">fix/vibe-15-ab-rating</span></p>
+                  <p>VIBE-30 → <span className="text-indigo-600">chore/vibe-30-security-audit</span></p>
                 </div>
               </div>
             </div>

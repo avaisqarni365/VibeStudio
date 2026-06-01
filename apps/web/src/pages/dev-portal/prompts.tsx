@@ -79,6 +79,18 @@ export default function DevPortalPrompts() {
     if (selected?.id === promptId) setSelected({ ...selected, rating });
   };
 
+  // A5: redact PII in place, and share with the redaction guard.
+  const redactSelected = async () => {
+    const r = await devApi('post', `/prompts/${selected.id}/redact`);
+    if (r.data?.success) { await openPrompt(selected.id); }
+  };
+  const toggleShare = async () => {
+    try {
+      const r = await devApi('post', `/prompts/${selected.id}/share`, { is_shared: !selected.is_shared });
+      if (r.data?.success) setSelected({ ...selected, ...r.data.data });
+    } catch (e: any) { alert(e?.response?.data?.error?.message || 'Cannot share — redact PII first.'); }
+  };
+
   const refresh = () => {
     loadPrompts();
     if (projectId) devApi('get', `/projects/${projectId}/prompt-stats`).then(s => setStats(s.data.data)).catch(() => {});
@@ -173,6 +185,25 @@ export default function DevPortalPrompts() {
                     </button>
                   ))}
                 </div>
+              </div>
+              {/* A5: Sharing & PII */}
+              <div className="bg-white border border-gray-200 rounded-xl p-3">
+                <p className="text-2xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Sharing & PII</p>
+                <div className="space-y-1.5 text-2xs mb-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">PII redacted</span>
+                    <span className={`px-1.5 py-0.5 rounded-full font-medium ${selected.is_pii_redacted ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{selected.is_pii_redacted ? 'yes' : 'no'}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Shared with team</span>
+                    <span className={`px-1.5 py-0.5 rounded-full font-medium ${selected.is_shared ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{selected.is_shared ? 'yes' : 'no'}</span>
+                  </div>
+                </div>
+                <div className="flex gap-1.5">
+                  <button onClick={redactSelected} disabled={selected.is_pii_redacted} className="flex-1 px-2 py-1.5 text-2xs font-semibold rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-40 disabled:hover:bg-white">🛡 Redact PII</button>
+                  <button onClick={toggleShare} className={`flex-1 px-2 py-1.5 text-2xs font-semibold rounded-lg ${selected.is_shared ? 'bg-gray-100 text-gray-600 hover:bg-gray-200' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>{selected.is_shared ? 'Unshare' : 'Share'}</button>
+                </div>
+                {!selected.is_pii_redacted && <p className="text-2xs text-gray-400 mt-1.5">Sharing is blocked until PII is redacted (or none is found).</p>}
               </div>
               {selected.task_key && (
                 <button onClick={() => router.push('/dev-portal/tasks/' + selected.task_id)} className="w-full text-left px-3 py-2 bg-white border border-gray-200 rounded-xl hover:border-indigo-200 hover:bg-indigo-50/30 transition-colors">
@@ -327,7 +358,7 @@ export default function DevPortalPrompts() {
           // B-5: dev portal token moved to httpOnly cookie — the browser can't
           // read it any more. CLI users need to obtain a token through the
           // /auth/login endpoint directly; the copy-token UX below is a
-          // known follow-up (issue ACCA-DEV-CLI-TOKEN).
+          // known follow-up (issue VIBE-DEV-CLI-TOKEN).
           const token = '';
           const copyToken = () => { navigator.clipboard.writeText(token); setTokenCopied(true); setTimeout(() => setTokenCopied(false), 2000); };
           return (
@@ -405,7 +436,7 @@ set DEV_PORTAL_TOKEN=${token.substring(0, 20)}...`}</pre>
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
-        "command": "node D:/ACCA/scripts/log-prompt.js \\"Code change\\" \\"Tool used on $(date +%Y-%m-%d_%H:%M)\\""
+        "command": "node D:/VibeStudio/scripts/log-prompt.js \\"Code change\\" \\"Tool used on $(date +%Y-%m-%d_%H:%M)\\""
       }
     ]
   }
@@ -416,7 +447,7 @@ set DEV_PORTAL_TOKEN=${token.substring(0, 20)}...`}</pre>
                   <div>
                     <p className="text-2xs font-semibold text-gray-500 mb-1">Step 3 — Test the connection</p>
                     <div className="bg-gray-900 rounded-xl p-3">
-                      <pre className="text-2xs text-gray-300 font-mono whitespace-pre-wrap">{`# Run from terminal in D:/ACCA:
+                      <pre className="text-2xs text-gray-300 font-mono whitespace-pre-wrap">{`# Run from terminal in D:/VibeStudio:
 node scripts/log-prompt.js "Test prompt" "Hello from CLI"
 
 # Check it appeared in the Prompt History tab above`}</pre>

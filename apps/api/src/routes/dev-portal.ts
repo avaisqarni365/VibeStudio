@@ -145,6 +145,29 @@ function devAuth(req: any, res: any, next: any) {
   })();
 }
 
+// Like devAuth but WITHOUT opening the per-request RLS transaction — for
+// long-lived responses (SSE) that must not hold a pooled DB connection open.
+// Only mount on endpoints that don't read RLS-scoped tables.
+function devAuthNoTx(req: any, res: any, next: any) {
+  (async () => {
+    try {
+      const token = extractDevToken(req);
+      if (!token) return res.status(401).json({ success: false, error: { code: 'NO_TOKEN', message: 'Dev portal token required' } });
+      const jwt = require('jsonwebtoken');
+      const { config } = require('@vibestudio/config');
+      const jwtSecret = config.jwtSecret || process.env.JWT_SECRET;
+      if (!jwtSecret) throw new Error('JWT_SECRET is not configured');
+      const decoded = jwt.verify(token, jwtSecret);
+      if (!decoded.isDevPortal) return res.status(403).json({ success: false, error: { code: 'NOT_DEV_PORTAL', message: 'This token is not for the dev portal' } });
+      if (await isDevSessionRevoked(token)) return res.status(401).json({ success: false, error: { code: 'SESSION_REVOKED', message: 'Session has been revoked. Please log in again.' } });
+      req.devUser = decoded;
+      next();
+    } catch (err) {
+      return res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid or expired dev portal token' } });
+    }
+  })();
+}
+
 // Restrict certain actions to CEO and lead roles
 function requireRole(...roles: string[]) {
   return (req: any, res: any, next: any) => {
@@ -257,6 +280,8 @@ router.get('/me/usage', devAuth, async (req: any, res) => {
         db.raw('COUNT(*)::int as total'),
         db.raw('COALESCE(SUM(prompt_tokens), 0)::int as prompt_tokens'),
         db.raw('COALESCE(SUM(response_tokens), 0)::int as response_tokens'),
+        db.raw('COALESCE(SUM(cache_read_tokens), 0)::int as cache_read_tokens'),
+        db.raw('COALESCE(SUM(cache_write_tokens), 0)::int as cache_write_tokens'),
         db.raw('COALESCE(SUM(duration_seconds), 0)::int as total_duration_seconds'),
         db.raw("COUNT(*) FILTER (WHERE status = 'failed')::int as failed"),
       )
@@ -282,7 +307,7 @@ router.get('/me/usage', devAuth, async (req: any, res) => {
       .modify(filterWhere)
       .select('model')
       .count({ count: 'id' })
-      .sum({ in_tokens: 'prompt_tokens', out_tokens: 'response_tokens' })
+      .sum({ in_tokens: 'prompt_tokens', out_tokens: 'response_tokens', cache_read: 'cache_read_tokens', cache_write: 'cache_write_tokens' })
       .groupBy('model')
       .orderBy('count', 'desc');
 
@@ -307,9 +332,9 @@ router.get('/me/usage', devAuth, async (req: any, res) => {
       .modify(filterWhere)
       .select(
         'id', 'title', 'ai_origin', 'provider', 'model',
-        'prompt_tokens', 'response_tokens', 'duration_seconds',
+        'prompt_tokens', 'response_tokens', 'cache_read_tokens', 'cache_write_tokens', 'duration_seconds',
         'status', 'device_type', 'os', 'browser', 'ip_address',
-        'actor_email', 'actor_role', 'actor_org_id',
+        'actor_email', 'actor_role',
         'created_at',
       )
       .orderBy('created_at', 'desc')
@@ -485,6 +510,16 @@ router.put('/projects/:projectId', devAuth, requireRole('ceo', 'lead'), async (r
   catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to update project' } }); }
 });
 
+// Generate (or relink) the filesystem context pack for a project → projects/<slug>/
+router.post('/projects/:projectId/pack', devAuth, requireRole('ceo', 'lead'), async (req: any, res) => {
+  try {
+    const data = await devPortalService.createProjectPack(req.params.projectId, { ...req.body, actorId: req.devUser.devMemberId });
+    res.json({ success: true, data });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to create project pack' } });
+  }
+});
+
 router.get('/projects/:projectId/members', devAuth, async (req: any, res) => {
   try { res.json({ success: true, data: await devPortalService.getProjectMembers(req.params.projectId) }); }
   catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to get members' } }); }
@@ -614,6 +649,36 @@ router.post('/tasks/:id/comments', devAuth, async (req: any, res) => {
     if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
     res.json({ success: true, data: await devPortalService.addComment(req.params.id, req.devUser.devMemberId, req.body.content, req.body.type) });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to add comment' } }); }
+});
+
+// ── A4: task ↔ commit/PR/CI links ──
+router.get('/tasks/:id/links', devAuth, async (req: any, res) => {
+  try {
+    const task = await devPortalService.getTask(req.params.id);
+    if (!task) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
+    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    res.json({ success: true, data: await devPortalService.getTaskLinks(req.params.id) });
+  } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to get task links' } }); }
+});
+
+router.post('/tasks/:id/links', devAuth, async (req: any, res) => {
+  try {
+    const task = await devPortalService.getTask(req.params.id);
+    if (!task) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
+    if (task.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    res.json({ success: true, data: await devPortalService.upsertTaskLink(req.params.id, req.body, req.devUser.devMemberId) });
+  } catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to add link' } }); }
+});
+
+router.delete('/task-links/:id', devAuth, async (req: any, res) => {
+  try {
+    const { db } = require('@vibestudio/database');
+    const link = await db('dev_task_links').where({ id: req.params.id }).first();
+    if (!link) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Link not found' } });
+    const task = await devPortalService.getTask(link.task_id);
+    if (task?.project_id && !await requireProjectMembership(task.project_id, req.devUser.devMemberId, res)) return;
+    res.json({ success: true, data: await devPortalService.deleteTaskLink(req.params.id) });
+  } catch (error: any) { res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to delete link' } }); }
 });
 
 // ── Dashboard ──
@@ -831,7 +896,12 @@ router.delete('/bookmarks/:id', devAuth, async (req: any, res) => {
 // ── Project Docs (live .md file browser + editor) ──
 const REPO_ROOT = process.cwd();
 const USER_HOME = process.env.USERPROFILE || process.env.HOME || '';
-const MEMORY_DIR = path.join(USER_HOME, '.claude', 'projects', 'D--ACCA', 'memory');
+// Claude Code stores per-project state under ~/.claude/projects/<slug>/, where
+// <slug> is the absolute repo path with drive colon + separators replaced by '-'
+// (e.g. D:\VibeStudio -> D--VibeStudio). Derive it from REPO_ROOT so VibeStudio
+// always reads its OWN memory, never another project's.
+const PROJECT_SLUG = REPO_ROOT.replace(/[:\\/]+/g, '-');
+const MEMORY_DIR = path.join(USER_HOME, '.claude', 'projects', PROJECT_SLUG, 'memory');
 
 function scanMdFiles(): { filename: string; dir: string; fullPath: string; size: number; category: string }[] {
   const results: { filename: string; dir: string; fullPath: string; size: number; category: string }[] = [];
@@ -932,6 +1002,73 @@ router.get('/projects/:projectId/prompt-stats', devAuth, async (req: any, res) =
   catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to get prompt stats' } }); }
 });
 
+// Cost-per-feature ROI (A7): AI spend joined to tasks/sprints for this project.
+// Project-scoped read-only analytics — gated by devAuth + DB RLS only, matching
+// the sibling `/prompt-stats` endpoint (the seed leaves `dev_project_members`
+// empty, so a membership gate would make all project analytics unreachable).
+router.get('/projects/:projectId/cost-roi', devAuth, async (req: any, res) => {
+  try {
+    res.json({ success: true, data: await devPortalService.getProjectCostRoi(req.params.projectId) });
+  } catch (error) { logger.error('Cost ROI error', error as Error); res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to compute cost ROI' } }); }
+});
+
+// ── A3: prompt A/B experiments ──
+// Resolve an experiment + enforce membership via its project. Returns the
+// experiment row, or null after having already sent a 404/403 response.
+async function experimentMembership(experimentId: string, req: any, res: any) {
+  const { db } = require('@vibestudio/database');
+  const exp = await db('dev_prompt_experiments').where({ id: experimentId }).first();
+  if (!exp) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Experiment not found' } }); return null; }
+  if (exp.project_id && !await requireProjectMembership(exp.project_id, req.devUser.devMemberId, res)) return null;
+  return exp;
+}
+
+router.post('/projects/:projectId/experiments', devAuth, async (req: any, res) => {
+  if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res)) return;
+  try { res.json({ success: true, data: await devPortalService.createExperiment(req.params.projectId, req.body, req.devUser.devMemberId) }); }
+  catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to create experiment' } }); }
+});
+
+router.get('/projects/:projectId/experiments', devAuth, async (req: any, res) => {
+  if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res)) return;
+  try { res.json({ success: true, data: await devPortalService.listExperiments(req.params.projectId) }); }
+  catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to list experiments' } }); }
+});
+
+router.get('/experiments/:id', devAuth, async (req: any, res) => {
+  if (!await experimentMembership(req.params.id, req, res)) return;
+  try { res.json({ success: true, data: await devPortalService.getExperiment(req.params.id) }); }
+  catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to get experiment' } }); }
+});
+
+router.delete('/experiments/:id', devAuth, async (req: any, res) => {
+  if (!await experimentMembership(req.params.id, req, res)) return;
+  try { res.json({ success: true, data: await devPortalService.deleteExperiment(req.params.id) }); }
+  catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to delete experiment' } }); }
+});
+
+router.post('/experiments/:id/decide', devAuth, async (req: any, res) => {
+  if (!await experimentMembership(req.params.id, req, res)) return;
+  try { res.json({ success: true, data: await devPortalService.decideExperimentWinner(req.params.id, req.body?.variant_id) }); }
+  catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to set winner' } }); }
+});
+
+router.post('/experiments/:id/variants/:variantId/run', devAuth, async (req: any, res) => {
+  if (!await experimentMembership(req.params.id, req, res)) return;
+  try { res.json({ success: true, data: await devPortalService.runVariant(req.params.variantId, req.body || {}, req.devUser.devMemberId) }); }
+  catch (error: any) { res.status(400).json({ success: false, error: { code: 'RUN_FAILED', message: error?.message || 'Run failed' } }); }
+});
+
+router.post('/variants/:variantId/rate', devAuth, async (req: any, res) => {
+  try {
+    const { db } = require('@vibestudio/database');
+    const variant = await db('dev_prompt_variants').where({ id: req.params.variantId }).first();
+    if (!variant) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Variant not found' } });
+    if (!await experimentMembership(variant.experiment_id, req, res)) return;
+    res.json({ success: true, data: await devPortalService.rateVariant(req.params.variantId, req.body?.rating) });
+  } catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to rate' } }); }
+});
+
 router.post('/projects/:projectId/prompts', devAuth, async (req: any, res) => {
   try {
     const deviceInfo = parseDevice(req);
@@ -970,6 +1107,36 @@ router.delete('/prompts/:id', devAuth, async (req: any, res) => {
     if (!isOwner && !isAdmin) return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the author or an admin can delete this prompt' } });
     await devPortalService.deletePrompt(req.params.id); res.json({ success: true });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to delete prompt' } }); }
+});
+
+// ── A5: PII redaction ──
+// Stateless preview — scan arbitrary text (e.g. the Prompt Builder draft) for secrets.
+router.post('/redact/preview', devAuth, async (req: any, res) => {
+  try { res.json({ success: true, data: devPortalService.previewRedaction(req.body?.text || '') }); }
+  catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Preview failed' } }); }
+});
+
+// Owner/admin gate shared by redact + share (author_id is the real column).
+async function promptOwnerOr403(promptId: string, req: any, res: any) {
+  const prompt = await devPortalService.getPrompt(promptId);
+  if (!prompt) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND' } }); return null; }
+  const ok = prompt.author_id === req.devUser.devMemberId || ['ceo', 'lead'].includes(req.devUser.role);
+  if (!ok) { res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the author or an admin can change this prompt' } }); return null; }
+  return prompt;
+}
+
+router.post('/prompts/:id/redact', devAuth, async (req: any, res) => {
+  try {
+    if (!await promptOwnerOr403(req.params.id, req, res)) return;
+    res.json({ success: true, data: await devPortalService.redactPrompt(req.params.id) });
+  } catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Redact failed' } }); }
+});
+
+router.post('/prompts/:id/share', devAuth, async (req: any, res) => {
+  try {
+    if (!await promptOwnerOr403(req.params.id, req, res)) return;
+    res.json({ success: true, data: await devPortalService.setPromptShared(req.params.id, !!req.body?.is_shared) });
+  } catch (error: any) { res.status(400).json({ success: false, error: { code: 'PII_BLOCKED', message: error?.message || 'Share failed' } }); }
 });
 
 // Device info endpoint — returns only non-sensitive client device details
@@ -1031,8 +1198,10 @@ router.post('/ai/chat', devAuth, async (req: any, res) => {
       return res.status(400).json({ success: false, error: { code: 'INVALID_PROVIDER', message: `Unknown provider: ${provider}` } });
     }
 
-    const apiKey = await getProviderKey(provider);
-    if (!apiKey) return res.status(400).json({ success: false, error: { code: 'NO_KEY', message: `No API key configured for ${AI_PROVIDERS[provider]?.name || provider}. Go to Platform Settings → AI Providers to add your key.` } });
+    // Local providers (Ollama) are keyless — skip the key requirement.
+    const isLocal = AI_PROVIDERS[provider]?.authHeader === 'none';
+    const apiKey = isLocal ? '' : await getProviderKey(provider);
+    if (!apiKey && !isLocal) return res.status(400).json({ success: false, error: { code: 'NO_KEY', message: `No API key configured for ${AI_PROVIDERS[provider]?.name || provider}. Go to Platform Settings → AI Providers to add your key.` } });
 
     // Cap max_tokens server-side
     const safeMaxTokens = Math.min(Number(max_tokens) || 2048, 8192);
@@ -1060,6 +1229,8 @@ router.post('/ai/chat', devAuth, async (req: any, res) => {
           status: 'completed',
           prompt_tokens: result.promptTokens,
           response_tokens: result.responseTokens,
+          cache_read_tokens: result.cacheReadTokens || 0,
+          cache_write_tokens: result.cacheWriteTokens || 0,
           duration_seconds: duration,
           labels: [provider, model],
         }, deviceInfo);
@@ -1083,6 +1254,25 @@ router.post('/ai/test-key', devAuth, async (req: any, res) => {
     res.json({ success: true, data: { working: true, response: result.content, model: result.model } });
   } catch (error: any) {
     res.json({ success: false, error: { code: 'TEST_FAILED', message: error?.message || 'Connection failed' } });
+  }
+});
+
+// ── Local AI Memory Search (A2 / Local AI Layer #9) ──
+const { memorySearchService } = require('../../../../domains/dev-portal/src/memory-search-service');
+
+// Build/rebuild the local embedding index over the .claude/ + docs corpus.
+router.post('/memory/index', devAuth, requireRole('ceo', 'lead'), async (req: any, res) => {
+  try { res.json({ success: true, data: await memorySearchService.buildIndex({ projectSlug: req.body.project_slug }) }); }
+  catch (error: any) { res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Index failed' } }); }
+});
+
+// Semantic (or lexical-fallback) search over the memory corpus.
+router.post('/memory/search', devAuth, async (req: any, res) => {
+  try {
+    const { query, k, project_slug } = req.body;
+    res.json({ success: true, data: await memorySearchService.search(query, { k, projectSlug: project_slug }) });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Search failed' } });
   }
 });
 
@@ -1149,6 +1339,102 @@ router.post('/code-files/clone', devAuth, requireRole('ceo', 'lead'), async (req
     }
     res.json({ success: true, data: await devPortalService.cloneGitRepo(req.body.project_id, url, req.body.name) });
   } catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Clone failed' } }); }
+});
+
+// IDE Monitor (#5): read-only git snapshot of a local repo (branch, changes, commits).
+router.get('/ops/monitor', devAuth, async (req: any, res) => {
+  try {
+    const p = (req.query.path as string) || '';
+    if (p && !isPathAllowed(p)) {
+      return res.status(403).json({ success: false, error: { code: 'PATH_DENIED', message: 'Access to this path is not allowed' } });
+    }
+    res.json({ success: true, data: await devPortalService.getRepoStatus(p || undefined) });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Monitor failed' } });
+  }
+});
+
+// Live IDE Monitor via SSE — pushes a fresh repo snapshot whenever the working
+// tree / branch / commits change. devAuthNoTx so the stream holds no DB trx;
+// EventSource (withCredentials) sends the dev_portal_token cookie.
+router.get('/ops/monitor/stream', devAuthNoTx, (req: any, res: any) => {
+  const p = (req.query.path as string) || '';
+  if (p && !isPathAllowed(p)) {
+    return res.status(403).json({ success: false, error: { code: 'PATH_DENIED', message: 'Access to this path is not allowed' } });
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write('retry: 5000\n\n');
+  const send = (event: string, data: any) => { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ } };
+  let stop = () => {};
+  try {
+    stop = devPortalService.watchRepo(p || undefined, (snap: any) => send('monitor', snap), { intervalMs: Number(req.query.interval) || 3000 });
+  } catch (e: any) {
+    send('error', { message: e?.message || 'watch failed' });
+  }
+  const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25000);
+  const cleanup = () => { clearInterval(hb); try { stop(); } catch {} try { res.end(); } catch {} };
+  req.on('close', cleanup);
+  res.on('error', cleanup);
+});
+
+// A4: scan a repo's commits and link them to tasks by task key (e.g. VIBE-11).
+router.post('/ops/scan-commits', devAuth, async (req: any, res) => {
+  try {
+    const { repo_path, limit } = req.body || {};
+    if (repo_path && !isPathAllowed(repo_path)) {
+      return res.status(403).json({ success: false, error: { code: 'PATH_DENIED', message: 'Access to this path is not allowed' } });
+    }
+    const data = await devPortalService.scanRepoTaskLinks({ repoPath: repo_path, limit, createdBy: req.devUser.devMemberId });
+    res.json({ success: true, data });
+  } catch (error: any) {
+    logger.error('Scan commits error', error as Error);
+    res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Scan failed' } });
+  }
+});
+
+// Cost Tracker: budget caps + per-model prices (.claude/cost-tracking/budget.json).
+router.get('/ops/budget', devAuth, async (_req: any, res) => {
+  try { res.json({ success: true, data: await devPortalService.getBudget() }); }
+  catch (error: any) { res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to load budget' } }); }
+});
+
+// Cost Tracker: monthly cost rollups (platform-wide spend per model/provider/member/project).
+// GET computes a month (default current) + lists months with usage. POST persists
+// the rollup to .claude/cost-tracking/<month>.md (managers only).
+router.get('/ops/cost-rollup', devAuth, async (req: any, res) => {
+  try {
+    const month = typeof req.query.month === 'string' ? req.query.month : undefined;
+    const [rollup, months] = await Promise.all([
+      devPortalService.getMonthlyRollup(month),
+      devPortalService.listRollupMonths(),
+    ]);
+    res.json({ success: true, data: { rollup, months } });
+  } catch (error: any) { logger.error('Cost rollup error', error as Error); res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to compute rollup' } }); }
+});
+
+router.post('/ops/cost-rollup', devAuth, requireRole('ceo', 'lead'), async (req: any, res) => {
+  try {
+    res.json({ success: true, data: await devPortalService.writeMonthlyRollup(req.body?.month) });
+  } catch (error: any) { logger.error('Cost rollup write error', error as Error); res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to write rollup' } }); }
+});
+
+// Auto bug-capture (A4/A6): write a bug-history entry + return a fix prompt.
+router.post('/ops/bug-capture', devAuth, async (req: any, res) => {
+  try {
+    const { repo_path, title, error, file, line, tool } = req.body;
+    if (repo_path && !isPathAllowed(repo_path)) {
+      return res.status(403).json({ success: false, error: { code: 'PATH_DENIED', message: 'Access to this path is not allowed' } });
+    }
+    const data = await devPortalService.captureBug({ repoPath: repo_path, title, error, file, line, tool, actorId: req.devUser.devMemberId });
+    res.json({ success: true, data });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Capture failed' } });
+  }
 });
 
 // ── Code Notes ──

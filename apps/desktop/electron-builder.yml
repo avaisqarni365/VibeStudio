@@ -1,0 +1,56 @@
+appId: uk.codes-ai.vibestudio
+productName: VibeStudio
+copyright: Copyright © 2026 VibeStudio
+# Pinned because electron is hoisted to the workspace root node_modules, which
+# electron-builder can't auto-resolve from apps/desktop. Keep in sync with the
+# electron devDependency.
+electronVersion: 31.7.7
+
+directories:
+  output: release
+  buildResources: assets
+
+# asar holds the Electron main/preload. The bundled servers ship as
+# extraResources (outside asar) because they are spawned as separate Node
+# processes that read their own files (node_modules, .next, etc.).
+files:
+  - dist-electron/**/*
+  - package.json
+
+extraResources:
+  - from: resources/api
+    to: api
+  - from: resources/web
+    to: web
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  # Drop an icon at assets/icon.ico to brand the installer + exe.
+  # icon: assets/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: VibeStudio
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.developer-tools
+  # icon: assets/icon.icns
+
+linux:
+  target:
+    - AppImage
+  category: Development
+  # icon: assets/icon.png

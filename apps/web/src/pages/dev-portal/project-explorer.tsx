@@ -88,6 +88,14 @@ export default function ProjectExplorer() {
   const [gitUrl, setGitUrl] = useState('');
   const [gitName, setGitName] = useState('');
   const [cloning, setCloning] = useState(false);
+  // IDE Monitor (#5)
+  const [monitor, setMonitor] = useState<any>(null);
+  const [monitorFor, setMonitorFor] = useState<LinkedProject | null>(null);
+  const [monitorLoading, setMonitorLoading] = useState(false);
+  const [bugTitle, setBugTitle] = useState('');
+  const [bugError, setBugError] = useState('');
+  const [bugResult, setBugResult] = useState<any>(null);
+  const [bugSaving, setBugSaving] = useState(false);
   // Folder browser
   const [folderEntries, setFolderEntries] = useState<any[]>([]);
   const [folderPath, setFolderPath] = useState('');
@@ -157,6 +165,52 @@ export default function ProjectExplorer() {
     setPathHistory(['']);
     setTreeExpanded({});
     browseDir('', p.path);
+  };
+
+  const loadMonitor = async (p: LinkedProject) => {
+    setMonitorFor(p);
+    setMonitor(null);
+    setBugResult(null);
+    setMonitorLoading(true);
+    try {
+      const r = await devApi('get', `/ops/monitor?path=${encodeURIComponent(p.path)}`);
+      setMonitor(r.data.data);
+    } catch (e: any) {
+      setMonitor({ error: e?.response?.data?.error?.message || 'Failed to read git status' });
+    } finally {
+      setMonitorLoading(false);
+    }
+  };
+
+  // Live watcher (SSE): stream repo snapshots while the modal is open. EventSource
+  // sends the dev_portal_token cookie (withCredentials); no manual refresh needed.
+  const [live, setLive] = useState(false);
+  const esRef = useRef<EventSource | null>(null);
+  const closeStream = () => { if (esRef.current) { esRef.current.close(); esRef.current = null; } };
+  useEffect(() => {
+    closeStream();
+    if (!live || !monitorFor) return;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4100';
+    const es = new EventSource(`${apiUrl}/api/v1/dev-portal/ops/monitor/stream?path=${encodeURIComponent(monitorFor.path)}&interval=3000`, { withCredentials: true });
+    es.addEventListener('monitor', (ev: MessageEvent) => { try { setMonitor(JSON.parse(ev.data)); setMonitorLoading(false); } catch {} });
+    es.onerror = () => { /* browser auto-reconnects per retry: */ };
+    esRef.current = es;
+    return closeStream;
+  }, [live, monitorFor]);
+  // Tear the stream down when the modal closes.
+  useEffect(() => { if (!monitorFor) { setLive(false); closeStream(); } }, [monitorFor]);
+
+  const captureBug = async () => {
+    if (!monitorFor || !bugTitle.trim() || bugSaving) return;
+    setBugSaving(true);
+    try {
+      const r = await devApi('post', '/ops/bug-capture', { repo_path: monitorFor.path, title: bugTitle, error: bugError });
+      setBugResult(r.data.data);
+    } catch (e: any) {
+      alert('Capture failed: ' + (e?.response?.data?.error?.message || 'unknown'));
+    } finally {
+      setBugSaving(false);
+    }
   };
 
   const exitToGallery = () => {
@@ -389,6 +443,8 @@ export default function ProjectExplorer() {
                     <p className="text-2xs text-gray-400 font-mono mt-1 truncate">{p.path.replace(/\\/g, '/')}</p>
                     <div className="flex items-center gap-2 mt-3">
                       {p.isCurrent && <span className="text-2xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-semibold">Current</span>}
+                      <button onClick={ev => { ev.stopPropagation(); loadMonitor(p); }} title="Git status (IDE Monitor)"
+                        className="text-2xs text-gray-500 hover:text-indigo-600 px-2 py-0.5 rounded-md border border-gray-200 hover:border-indigo-300">⎇ Git</button>
                       <span className="text-2xs text-gray-400 ml-auto group-hover:text-indigo-500 transition-colors flex items-center gap-1">
                         Open
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
@@ -774,6 +830,97 @@ export default function ProjectExplorer() {
       )}
 
       {/* ═══ ADD PROJECT MODAL — Folder Browser + Git Clone ═══ */}
+      {monitorFor && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={() => setMonitorFor(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 sticky top-0 bg-white">
+              <div>
+                <h3 className="text-sm font-bold text-gray-900">⎇ Git Monitor — {monitorFor.name}</h3>
+                <p className="text-2xs text-gray-400 font-mono truncate">{monitorFor.path.replace(/\\/g, '/')}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setLive(l => !l)} title="Stream git status live (auto-refresh on file/commit changes)"
+                  className={`text-2xs rounded-lg px-2 py-1 font-medium border transition-colors ${live ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'border-gray-200 text-gray-500 hover:text-indigo-600'}`}>
+                  {live ? <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />Live</span> : '⦿ Go live'}
+                </button>
+                <button onClick={() => loadMonitor(monitorFor)} disabled={live} className="text-2xs text-gray-500 hover:text-indigo-600 border border-gray-200 rounded-lg px-2 py-1 disabled:opacity-40">Refresh</button>
+                <button onClick={() => setMonitorFor(null)} className="text-gray-400 hover:text-gray-700">✕</button>
+              </div>
+            </div>
+            <div className="p-5 space-y-4 text-xs">
+              {monitorLoading && <p className="text-gray-400">Reading git status…</p>}
+              {!monitorLoading && monitor?.error && <p className="text-red-500">{monitor.error}</p>}
+              {!monitorLoading && monitor && !monitor.error && !monitor.isRepo && <p className="text-gray-500">Not a git repository.</p>}
+              {!monitorLoading && monitor?.isRepo && (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-semibold">⎇ {monitor.branch}</span>
+                    {monitor.upstream && <span className="text-2xs text-gray-400">↔ {monitor.upstream}</span>}
+                    {(monitor.ahead > 0) && <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold">↑ {monitor.ahead}</span>}
+                    {(monitor.behind > 0) && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold">↓ {monitor.behind}</span>}
+                    <span className="ml-auto text-2xs text-gray-400">{monitor.changedCount} changed · {monitor.todos} TODO/FIXME</span>
+                  </div>
+                  <div>
+                    <p className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Changes {monitor.diff?.unstaged ? `· ${monitor.diff.unstaged}` : ''}</p>
+                    {monitor.changed?.length ? (
+                      <div className="border border-gray-100 rounded-lg max-h-40 overflow-y-auto divide-y divide-gray-50">
+                        {monitor.changed.map((c: any, i: number) => (
+                          <div key={i} className="flex items-center gap-2 px-2 py-1 font-mono">
+                            <span className="w-6 text-center text-2xs font-bold text-amber-600">{c.status || '·'}</span>
+                            <span className="truncate text-gray-700">{c.file}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="text-2xs text-gray-400">Working tree clean.</p>}
+                  </div>
+                  <div>
+                    <p className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Recent commits</p>
+                    <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+                      {(monitor.commits || []).map((c: any, i: number) => (
+                        <div key={i} className="px-2 py-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-2xs text-indigo-600">{c.hash}</span>
+                            <span className="text-gray-800 truncate flex-1">{c.subject}</span>
+                          </div>
+                          <p className="text-2xs text-gray-400 mt-0.5">{c.author} · {c.when}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Auto bug-capture (A4/A6) */}
+                  <div className="border-t border-gray-100 pt-3">
+                    <p className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Capture bug from these changes</p>
+                    {!bugResult ? (
+                      <div className="space-y-2">
+                        <input value={bugTitle} onChange={e => setBugTitle(e.target.value)} placeholder="Bug title (e.g. board reorder loses position)"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs" />
+                        <textarea value={bugError} onChange={e => setBugError(e.target.value)} rows={3} placeholder="Paste the exact error / failing behavior (optional)"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono" />
+                        <button onClick={captureBug} disabled={!bugTitle.trim() || bugSaving}
+                          className="px-3 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-lg">
+                          {bugSaving ? 'Capturing…' : '🐛 Capture bug + fix prompt'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-2xs text-emerald-600">✓ Saved to <span className="font-mono">{bugResult.file}</span></p>
+                        <textarea readOnly value={bugResult.prompt} rows={8}
+                          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-2xs font-mono text-gray-700" />
+                        <div className="flex gap-2">
+                          <button onClick={() => navigator.clipboard.writeText(bugResult.prompt)} className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg">📋 Copy fix prompt</button>
+                          <button onClick={() => { setBugResult(null); setBugTitle(''); setBugError(''); }} className="px-3 py-1.5 text-xs text-gray-500 border border-gray-200 rounded-lg">New</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAddProject && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center" onClick={() => setShowAddProject(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-[580px] max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>

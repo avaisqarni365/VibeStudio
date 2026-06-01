@@ -93,7 +93,7 @@ export default function DevPortalArchitecture() {
           <h3 className="text-xs font-semibold text-gray-700 mb-3">Access &amp; Security</h3>
           <div className="grid grid-cols-2 gap-3">
             {[
-              { n: 1, title: 'Auth — dev_portal_token', desc: 'httpOnly JWT cookie + Bearer fallback for cross-port localhost. Validated by the dev-portal middleware (never acca_token).', color: 'border-red-300 bg-red-50' },
+              { n: 1, title: 'Auth — dev_portal_token', desc: 'httpOnly JWT cookie + Bearer fallback for cross-port localhost. Validated by the dev-portal middleware (VibeStudio\'s own token).', color: 'border-red-300 bg-red-50' },
               { n: 2, title: 'Roles', desc: 'ceo / lead / product_owner, plus AI agent roles (agent_*). Route-level role gating.', color: 'border-amber-300 bg-amber-50' },
               { n: 3, title: 'Database — PostgreSQL RLS', desc: 'RLS enabled on dev_* tables. Direct DB scripts must SET LOCAL app.current_member_id per transaction.', color: 'border-blue-300 bg-blue-50' },
               { n: 4, title: 'Audit', desc: 'logActivity() records every mutation into dev_activity_log for a full trail.', color: 'border-emerald-300 bg-emerald-50' },

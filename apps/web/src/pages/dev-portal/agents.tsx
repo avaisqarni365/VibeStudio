@@ -115,7 +115,7 @@ export default function DevPortalAgents() {
                 </div>
               </div>
               <div className="bg-white border border-gray-200 rounded-xl p-4">
-                <h3 className="text-2xs font-semibold text-gray-400 uppercase tracking-wider mb-2">ACCA Domains</h3>
+                <h3 className="text-2xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Domains</h3>
                 <div className="flex flex-wrap gap-1">{profile.domains.map(d => <span key={d} className="text-2xs px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-lg">{d}</span>)}</div>
               </div>
               <div className="bg-white border border-gray-200 rounded-xl p-4">

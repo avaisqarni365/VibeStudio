@@ -1,0 +1,22 @@
+{
+  "monthly_usd_cap": 200,
+  "alert_at_percent": 80,
+  "currency": "USD",
+  "_note": "Prices are USD per 1M tokens, keyed by a substring matched against the model id (first match wins). Cache reads are billed at ~0.1x input, cache writes at ~1.25x input. Local models (ollama/groq free tier) are 0. Edit freely — the /ops/budget endpoint serves this file and the usage page uses it for cost estimates.",
+  "per_model": {
+    "opus": { "in_per_mtok": 5, "out_per_mtok": 25 },
+    "sonnet": { "in_per_mtok": 3, "out_per_mtok": 15 },
+    "haiku": { "in_per_mtok": 1, "out_per_mtok": 5 },
+    "gpt-4o-mini": { "in_per_mtok": 0.15, "out_per_mtok": 0.6 },
+    "gpt-4o": { "in_per_mtok": 2.5, "out_per_mtok": 10 },
+    "gpt-4": { "in_per_mtok": 5, "out_per_mtok": 15 },
+    "deepseek": { "in_per_mtok": 0.27, "out_per_mtok": 1.1 },
+    "moonshot": { "in_per_mtok": 0.6, "out_per_mtok": 2.5 },
+    "ollama": { "in_per_mtok": 0, "out_per_mtok": 0 },
+    "llama": { "in_per_mtok": 0, "out_per_mtok": 0 },
+    "mixtral": { "in_per_mtok": 0, "out_per_mtok": 0 },
+    "qwen": { "in_per_mtok": 0, "out_per_mtok": 0 },
+    "mistral": { "in_per_mtok": 0, "out_per_mtok": 0 },
+    "phi": { "in_per_mtok": 0, "out_per_mtok": 0 }
+  }
+}

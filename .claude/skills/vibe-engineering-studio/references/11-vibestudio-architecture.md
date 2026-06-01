@@ -19,6 +19,7 @@ engineering and developer context tooling.
 | Layer | Path |
 |---|---|
 | Web pages (30) | `apps/web/src/pages/dev-portal/*` |
+| Desktop shell | `apps/desktop/` (Electron — wraps the web app, packages to .exe) |
 | Layout | `apps/web/src/components/layouts/DevPortalLayout.tsx` |
 | Auth hook | `apps/web/src/hooks/useDevAuth.ts` (`devApi` helper) |
 | API router | `apps/api/src/routes/dev-portal.ts` (single router) |

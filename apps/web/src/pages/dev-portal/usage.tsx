@@ -19,11 +19,11 @@ interface Breakdown { count: string | number }
 interface UsageData {
   me: { id: string; email: string; name: string; role: string };
   range: Range;
-  totals: { total: number; prompt_tokens: number; response_tokens: number; total_duration_seconds: number; failed: number };
+  totals: { total: number; prompt_tokens: number; response_tokens: number; cache_read_tokens: number; cache_write_tokens: number; total_duration_seconds: number; failed: number };
   breakdowns: {
     byOrigin: ({ ai_origin: string } & Breakdown)[];
     byProvider: ({ provider: string; in_tokens: number; out_tokens: number } & Breakdown)[];
-    byModel: ({ model: string; in_tokens: number; out_tokens: number } & Breakdown)[];
+    byModel: ({ model: string; in_tokens: number; out_tokens: number; cache_read: number; cache_write: number } & Breakdown)[];
     byDevice: ({ device_type: string; os: string; browser: string } & Breakdown)[];
   };
   daily: ({ day: string; in_tokens: number; out_tokens: number } & Breakdown)[];
@@ -43,7 +43,6 @@ interface UsageData {
     ip_address: string | null;
     actor_email: string | null;
     actor_role: string | null;
-    actor_org_id: string | null;
     created_at: string;
   }>;
 }
@@ -80,6 +79,12 @@ export default function DevPortalUsage() {
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState<any | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
+  const [budget, setBudget] = useState<{ monthly_usd_cap: number; alert_at_percent: number; currency: string; per_model: Record<string, { in_per_mtok: number; out_per_mtok: number }> } | null>(null);
+  const [months, setMonths] = useState<{ month: string; prompts: number; hasFile: boolean }[]>([]);
+  const [rollMonth, setRollMonth] = useState<string>('');
+  const [roll, setRoll] = useState<any>(null);
+  const [rollBusy, setRollBusy] = useState(false);
+  const [savedPath, setSavedPath] = useState<string>('');
 
   const fetchUsage = async () => {
     setBusy(true);
@@ -98,6 +103,38 @@ export default function DevPortalUsage() {
 
   useEffect(() => { if (user) fetchUsage(); /* eslint-disable-next-line */ }, [user, range, originFilter, providerFilter]);
 
+  // Budget caps + per-model prices (from .claude/cost-tracking/budget.json).
+  useEffect(() => {
+    if (!user) return;
+    devApi('get', '/ops/budget').then(r => { if (r.data?.success) setBudget(r.data.data); }).catch(() => {});
+  }, [user]);
+
+  // Monthly cost rollups (managers only). One endpoint computes a month + lists
+  // months with usage; POST persists .claude/cost-tracking/<month>.md.
+  const isManager = !!user && ['ceo', 'lead'].includes(user.role);
+  const fetchRollup = async (month?: string) => {
+    setRollBusy(true); setSavedPath('');
+    try {
+      const r = await devApi('get', `/ops/cost-rollup${month ? `?month=${month}` : ''}`);
+      if (r.data?.success) {
+        setRoll(r.data.data.rollup);
+        setMonths(r.data.data.months);
+        if (!month) setRollMonth(r.data.data.rollup.month);
+      }
+    } catch (e) { console.warn('rollup fetch failed', e); } finally { setRollBusy(false); }
+  };
+  useEffect(() => { if (isManager) fetchRollup(); /* eslint-disable-next-line */ }, [user]);
+  const saveRollup = async () => {
+    setRollBusy(true);
+    try {
+      const r = await devApi('post', '/ops/cost-rollup', { month: rollMonth });
+      if (r.data?.success) {
+        setSavedPath(r.data.data.path);
+        setMonths(ms => ms.map(m => m.month === rollMonth ? { ...m, hasFile: true } : m));
+      }
+    } catch (e) { console.warn('rollup save failed', e); } finally { setRollBusy(false); }
+  };
+
   const openDetail = async (id: string) => {
     setDetailBusy(true);
     try {
@@ -113,6 +150,42 @@ export default function DevPortalUsage() {
   const totalTokens = useMemo(() =>
     (data?.totals.prompt_tokens || 0) + (data?.totals.response_tokens || 0),
   [data]);
+
+  // Price (USD per 1M tokens) for a model — from budget.json per_model
+  // (substring match, first wins) with a built-in fallback. Cache read ≈0.1×
+  // input, cache write ≈1.25× input (Anthropic 5-min TTL); local models ≈ $0.
+  const priceOf = useMemo(() => {
+    const FALLBACK: [string, number, number][] = [
+      ['opus', 5, 25], ['sonnet', 3, 15], ['haiku', 1, 5],
+      ['gpt-4o-mini', 0.15, 0.6], ['gpt-4o', 2.5, 10], ['gpt-4', 5, 15],
+      ['deepseek', 0.27, 1.1], ['moonshot', 0.6, 2.5],
+      ['llama', 0, 0], ['mixtral', 0, 0], ['qwen', 0, 0], ['mistral', 0, 0], ['phi', 0, 0], ['ollama', 0, 0],
+    ];
+    const fromBudget: [string, number, number][] = Object.entries(budget?.per_model || {})
+      .map(([k, v]) => [k.toLowerCase(), Number(v.in_per_mtok) || 0, Number(v.out_per_mtok) || 0] as [string, number, number]);
+    const table = [...fromBudget, ...FALLBACK];
+    return (model: string) => {
+      const m = (model || '').toLowerCase();
+      const hit = table.find(([k]) => m.includes(k));
+      return hit ? { in: hit[1], out: hit[2] } : { in: 0, out: 0 };
+    };
+  }, [budget]);
+
+  const modelCost = (b: { model: string; in_tokens: number; out_tokens: number; cache_read: number; cache_write: number }) => {
+    const p = priceOf(b.model);
+    return (Number(b.in_tokens || 0) * p.in + Number(b.out_tokens || 0) * p.out
+      + Number(b.cache_read || 0) * p.in * 0.1 + Number(b.cache_write || 0) * p.in * 1.25) / 1e6;
+  };
+
+  const estCost = useMemo(() =>
+    data ? data.breakdowns.byModel.reduce((s, b) => s + modelCost(b), 0) : 0,
+  [data, priceOf]);
+
+  const cap = Number(budget?.monthly_usd_cap) || 0;
+  const alertPct = Number(budget?.alert_at_percent) || 80;
+  const budgetPct = cap > 0 ? Math.min((estCost / cap) * 100, 100) : 0;
+  const overAlert = cap > 0 && (estCost / cap) * 100 >= alertPct;
+  const fmtUsd = (n: number) => '$' + n.toFixed(n < 1 ? 4 : 2);
 
   // Max daily count for the simple bar chart scaling.
   const maxDaily = useMemo(() =>
@@ -147,13 +220,75 @@ export default function DevPortalUsage() {
         </div>
 
         {/* Stat cards */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Stat label="Total prompts" value={data?.totals.total ?? 0} accent="text-blue-700" />
           <Stat label="Prompt tokens" value={(data?.totals.prompt_tokens ?? 0).toLocaleString()} accent="text-emerald-700" />
           <Stat label="Response tokens" value={(data?.totals.response_tokens ?? 0).toLocaleString()} accent="text-indigo-700" />
           <Stat label="Total tokens" value={totalTokens.toLocaleString()} accent="text-gray-900" />
+          <Stat label="Cache read (cheap)" value={(data?.totals.cache_read_tokens ?? 0).toLocaleString()} accent="text-cyan-700" />
+          <Stat label="Cache write" value={(data?.totals.cache_write_tokens ?? 0).toLocaleString()} accent="text-amber-700" />
+          <Stat label="Est. cost" value={'$' + estCost.toFixed(estCost < 1 ? 4 : 2)} accent="text-fuchsia-700" />
           <Stat label="Failed" value={data?.totals.failed ?? 0} accent={data?.totals.failed ? 'text-rose-700' : 'text-gray-400'} />
         </div>
+        <p className="text-2xs text-gray-400 -mt-2">Est. cost uses prices from <code>.claude/cost-tracking/budget.json</code> (cache reads ≈0.1× input, writes ≈1.25×); local models counted as $0. Indicative only.</p>
+
+        {/* Monthly budget */}
+        {cap > 0 && (
+          <div className={`bg-white border rounded-xl p-4 ${overAlert ? 'border-rose-300' : 'border-gray-200'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-gray-700">Monthly budget {range !== 'month' ? <span className="text-2xs font-normal text-gray-400">(showing {range} spend vs monthly cap — switch to “30 days” for an apples-to-apples view)</span> : null}</span>
+              <span className={`text-xs font-bold ${overAlert ? 'text-rose-600' : 'text-gray-700'}`}>{fmtUsd(estCost)} / {fmtUsd(cap)} <span className="text-gray-400 font-normal">({Math.round((estCost / cap) * 100)}%)</span></span>
+            </div>
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div className={`h-full rounded-full transition-all ${budgetPct >= 100 ? 'bg-rose-500' : overAlert ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${budgetPct}%` }} />
+            </div>
+            {overAlert && <p className="text-2xs text-rose-600 mt-1.5">⚠ Over {alertPct}% of the monthly cap. Edit the cap in <code>.claude/cost-tracking/budget.json</code>.</p>}
+          </div>
+        )}
+
+        {/* Monthly cost rollups (managers) — platform-wide spend, exportable to .claude/cost-tracking/ */}
+        {isManager && (
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+              <div>
+                <h3 className="text-xs font-semibold text-gray-900">Monthly cost rollup <span className="text-2xs font-normal text-gray-400">· whole team, all origins</span></h3>
+                <p className="text-2xs text-gray-400 mt-0.5">Exports a summary to <code>.claude/cost-tracking/&lt;month&gt;.md</code>.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={rollMonth}
+                  onChange={e => { const m = e.target.value; setRollMonth(m); fetchRollup(m); }}
+                  className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500/20">
+                  {months.length === 0 && rollMonth && <option value={rollMonth}>{rollMonth}</option>}
+                  {months.map(m => (
+                    <option key={m.month} value={m.month}>{m.month} · {m.prompts} prompts{m.hasFile ? ' ✓' : ''}</option>
+                  ))}
+                </select>
+                <button onClick={saveRollup} disabled={rollBusy || !rollMonth}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg whitespace-nowrap">
+                  {rollBusy ? 'Working…' : 'Save rollup'}
+                </button>
+              </div>
+            </div>
+            {savedPath && <p className="text-2xs text-emerald-600 mb-2">✓ Wrote <code>{savedPath}</code></p>}
+            {roll ? (
+              <>
+                <p className="text-xs text-gray-700 mb-3">
+                  <span className="font-bold text-fuchsia-700">{fmtUsd(roll.totals.cost)}</span> · {Number(roll.totals.prompts).toLocaleString()} prompts ·{' '}
+                  {Number(roll.totals.in_tokens).toLocaleString()} in / {Number(roll.totals.out_tokens).toLocaleString()} out tokens
+                  {roll.budget_pct != null && <span className="text-gray-400"> · {roll.budget_pct}% of cap</span>}
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <MiniRank title="Top models" rows={roll.byModel.slice(0, 5).map((b: any) => ({ label: b.model, value: fmtUsd(b.cost) }))} />
+                  <MiniRank title="Top members" rows={roll.byMember.slice(0, 5).map((b: any) => ({ label: b.name, value: fmtUsd(b.cost) }))} />
+                  <MiniRank title="By project" rows={roll.byProject.slice(0, 5).map((b: any) => ({ label: b.name, value: fmtUsd(b.cost) }))} />
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-gray-400 py-4 text-center">{rollBusy ? 'Loading…' : 'No usage recorded yet.'}</p>
+            )}
+          </div>
+        )}
 
         {/* Breakdowns */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -176,12 +311,12 @@ export default function DevPortalUsage() {
             onClickRow={k => setProviderFilter(providerFilter === k ? '' : k)}
           />
           <BreakdownCard
-            title="By model"
+            title="By model (with est. cost)"
             rows={(data?.breakdowns.byModel || []).slice(0, 8).map(b => ({
               key: b.model || 'unknown',
               label: b.model || '—',
               count: Number(b.count),
-              subtitle: `${Number(b.in_tokens || 0).toLocaleString()} in / ${Number(b.out_tokens || 0).toLocaleString()} out`,
+              subtitle: `${Number(b.in_tokens || 0).toLocaleString()} in / ${Number(b.out_tokens || 0).toLocaleString()} out · ${fmtUsd(modelCost(b))}`,
             }))}
           />
           <BreakdownCard
@@ -404,6 +539,26 @@ function BreakdownCard({
               </li>
             );
           })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function MiniRank({ title, rows }: { title: string; rows: { label: string; value: string }[] }) {
+  return (
+    <div>
+      <p className="text-2xs uppercase tracking-wide text-gray-500 mb-1.5">{title}</p>
+      {rows.length === 0 ? (
+        <p className="text-2xs text-gray-400">—</p>
+      ) : (
+        <ul className="space-y-1">
+          {rows.map((r, i) => (
+            <li key={i} className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-gray-700 truncate" title={r.label}>{r.label}</span>
+              <span className="text-gray-500 tabular-nums shrink-0">{r.value}</span>
+            </li>
+          ))}
         </ul>
       )}
     </div>

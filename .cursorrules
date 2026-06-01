@@ -1,0 +1,25 @@
+# .cursorrules — VibeStudio / Vibe Engineering Studio
+# Mirror of CLAUDE.md + AGENTS.md for Cursor. Keep in sync with those.
+
+You are working in VibeStudio (a.k.a. Vibe Engineering Studio), a standalone
+dev-tooling studio extracted from the ACCA accounting app. It has NO
+accounting concepts — if you reason about SKR03, journal entries, VAT,
+DATEV, debtors/kreditors, you are wrong.
+
+## Hard rules
+- Ports: web 3100, API 4100, DB tunnel 127.0.0.1:5545. Never 3000/4000 (ACCA).
+- Auth: dev_portal_token (httpOnly cookie + Bearer fallback) ONLY. No acca_token.
+- Single-tenant: no resolveOrgId / organization_id. Scope by member_id + RLS
+  (direct DB scripts: SET LOCAL app.current_member_id).
+- DB: all tables dev_*, snake_case, UUID PKs. Never edit a shipped migration;
+  add infrastructure/migrations/NNN_<slug>.js (next 082) with knex up/down + hasTable guards.
+- API: routes under /api/v1/dev-portal in apps/api/src/routes/dev-portal.ts; responses { success, data, error }.
+- Web: apps/web/src/pages/dev-portal/*, DevPortalLayout, useDevAuth().devApi. Packages are @vibestudio/*.
+- AI: domains/dev-portal/src/ai-provider-service.ts; prefer the latest Claude models; keys optional (503 if none).
+
+## Workflow (context engineering first)
+- Before coding: read memory.md, PROJECT_PLAN.md, .claude/sessions/latest-session.md,
+  and check .claude/prompts/ + .claude/bug-history/ + .claude/sprint/.
+- After: save reusable prompts to .claude/prompts/, bugs+fixes to .claude/bug-history/,
+  decisions to memory.md; write a session summary to .claude/sessions/ at close.
+- State which context you used in your answer.

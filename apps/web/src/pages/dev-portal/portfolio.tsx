@@ -33,7 +33,7 @@ export default function Portfolio() {
   const [filter, setFilter] = useState('');
 
   // Create form
-  const [form, setForm] = useState({ name: '', key: '', description: '', color: '#6366f1', icon: '📦', priority: 'medium', category: 'internal', start_date: '', target_date: '', repository_url: '', tech_stack: '', client_name: '', lead_id: '' });
+  const [form, setForm] = useState({ name: '', key: '', description: '', color: '#6366f1', icon: '📦', priority: 'medium', category: 'internal', start_date: '', target_date: '', repository_url: '', tech_stack: '', client_name: '', lead_id: '', genPack: true });
 
   useEffect(() => {
     if (!user) return;
@@ -59,15 +59,41 @@ export default function Portfolio() {
   const createProject = async () => {
     if (!form.name) return;
     try {
-      await devApi('post', '/projects', { ...form, key: form.key || form.name.substring(0, 5).toUpperCase().replace(/[^A-Z0-9]/g, '') });
+      const { genPack, ...projectFields } = form;
+      const r = await devApi('post', '/projects', { ...projectFields, key: form.key || form.name.substring(0, 5).toUpperCase().replace(/[^A-Z0-9]/g, '') });
+      const created = r.data?.data;
+      // Generate the filesystem context pack (projects/<slug>/) for the new project.
+      if (genPack && created?.id) {
+        try {
+          const pr = await devApi('post', `/projects/${created.id}/pack`, { repo_path: form.repository_url });
+          const dp = pr.data?.data?.docs_path;
+          if (dp) alert(`Project created. Context pack: ${dp}`);
+        } catch (pe: any) {
+          alert('Project created, but pack generation failed: ' + (pe?.response?.data?.error?.message || 'unknown'));
+        }
+      }
       setShowCreate(false);
-      setForm({ name: '', key: '', description: '', color: '#6366f1', icon: '📦', priority: 'medium', category: 'internal', start_date: '', target_date: '', repository_url: '', tech_stack: '', client_name: '', lead_id: '' });
+      setForm({ name: '', key: '', description: '', color: '#6366f1', icon: '📦', priority: 'medium', category: 'internal', start_date: '', target_date: '', repository_url: '', tech_stack: '', client_name: '', lead_id: '', genPack: true });
       devApi('get', '/portfolio').then(r => setProjects(r.data.data || [])).catch(() => {});
     } catch (e: any) { alert(e?.response?.data?.error?.message || 'Failed'); }
   };
 
   const updateHealth = async (projectId: string, health: string) => {
     try { await devApi('put', `/projects/${projectId}`, { health }); devApi('get', '/portfolio').then(r => setProjects(r.data.data || [])).catch(() => {}); } catch {}
+  };
+
+  const packPath = (p: any): string | null => {
+    try { const s = typeof p.settings === 'string' ? JSON.parse(p.settings) : (p.settings || {}); return s?.docs_path || null; } catch { return null; }
+  };
+
+  const genProjectPack = async (p: any, force = false) => {
+    if (force && !confirm(`Regenerate context pack for "${p.name}"? Existing files are kept unless overwritten.`)) return;
+    try {
+      const r = await devApi('post', `/projects/${p.id}/pack`, { force });
+      const dp = r.data?.data?.docs_path;
+      alert(dp ? `Context pack ready: ${dp}` : 'Pack updated');
+      devApi('get', '/portfolio').then(r2 => setProjects(r2.data.data || [])).catch(() => {});
+    } catch (e: any) { alert('Pack failed: ' + (e?.response?.data?.error?.message || 'unknown')); }
   };
 
   const switchAndGo = (projectId: string, path: string) => {
@@ -178,6 +204,7 @@ export default function Portfolio() {
                       {p.active_sprint && <span>🏃 {p.active_sprint.name}</span>}
                       {p.target_date && <span>📅 {new Date(p.target_date).toLocaleDateString('de-DE')}</span>}
                       {p.tech_stack && <span className="truncate max-w-[120px]">⚙ {p.tech_stack}</span>}
+                      {packPath(p) && <span className="truncate max-w-[140px] text-emerald-600" title={packPath(p) || ''}>📁 {packPath(p)}</span>}
                     </div>
 
                     {/* Actions */}
@@ -185,6 +212,10 @@ export default function Portfolio() {
                       <button onClick={() => switchAndGo(p.id, '/dev-portal/tasks')} className="text-2xs font-semibold text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50">Tasks</button>
                       <button onClick={() => switchAndGo(p.id, '/dev-portal/board')} className="text-2xs font-semibold text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50">Board</button>
                       <button onClick={() => switchAndGo(p.id, '/dev-portal/sprints')} className="text-2xs font-semibold text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50">Sprints</button>
+                      {isMgr && (packPath(p)
+                        ? <button onClick={() => genProjectPack(p, true)} title={`Regenerate — ${packPath(p)}`} className="text-2xs font-semibold text-emerald-600 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50">📁 Pack</button>
+                        : <button onClick={() => genProjectPack(p, false)} title="Generate context pack" className="text-2xs font-semibold text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-50">Generate pack</button>
+                      )}
                       <button onClick={() => loadMembers(p.id)} className="text-2xs font-semibold text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-50 ml-auto">Team ({p.member_count || 0})</button>
                       {isMgr && (
                         <select value={p.health || 'on_track'} onChange={e => updateHealth(p.id, e.target.value)} className="text-2xs border border-gray-200 rounded-lg px-1 py-0.5 bg-white">
@@ -373,6 +404,12 @@ export default function Portfolio() {
                 <label className="text-2xs text-gray-500 font-semibold">Repository URL</label>
                 <input type="text" value={form.repository_url} onChange={e => setForm({ ...form, repository_url: e.target.value })} className="w-full mt-1 px-3 py-2 border rounded-xl text-xs font-mono" placeholder="https://github.com/..." />
               </div>
+              <label className="col-span-2 flex items-start gap-2 p-2 rounded-xl bg-indigo-50 border border-indigo-100 cursor-pointer">
+                <input type="checkbox" checked={form.genPack} onChange={e => setForm({ ...form, genPack: e.target.checked })} className="mt-0.5" />
+                <span className="text-2xs text-indigo-700">
+                  <span className="font-semibold">Generate context pack</span> — creates <code>projects/&lt;slug&gt;/</code> with PROJECT_PLAN, PRD, ARCHITECTURE, TASKS, memory, CLAUDE/AGENTS/.cursorrules, and sessions/prompts/bug-history/sprint folders, linked to this project.
+                </span>
+              </label>
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={() => setShowCreate(false)} className="px-4 py-2 text-xs text-gray-500 border rounded-xl">Cancel</button>
                 <button onClick={createProject} disabled={!form.name} className="px-5 py-2 text-xs font-semibold text-white bg-indigo-600 disabled:opacity-50 rounded-xl shadow-sm">Create Project</button>

@@ -361,14 +361,14 @@ export default function DevPortalTeam() {
         {/* ── Grid View ── */}
         {view === 'grid' && (
           <div className="space-y-5">
-            {Object.entries(
+            {(Object.entries(
               humans.reduce((acc: Record<string, any[]>, m: any) => {
                 const d = m.department || 'engineering';
                 if (!acc[d]) acc[d] = [];
                 acc[d].push(m);
                 return acc;
               }, {} as Record<string, any[]>)
-            ).sort().map(([dept, deptMembers]) => (
+            ) as [string, any[]][]).sort().map(([dept, deptMembers]) => (
               <div key={dept}>
                 <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 capitalize">{dept} ({deptMembers.length})</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

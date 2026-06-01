@@ -454,7 +454,7 @@ export default function DevPortalKnowledge() {
               <h3 className="text-xs font-semibold text-gray-700 mb-3">Access &amp; Security</h3>
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { n: 1, title: 'Auth — dev_portal_token', desc: 'httpOnly JWT cookie + Bearer fallback. Validated by the dev-portal middleware (never acca_token).', color: 'border-red-300 bg-red-50' },
+                  { n: 1, title: 'Auth — dev_portal_token', desc: 'httpOnly JWT cookie + Bearer fallback. Validated by the dev-portal middleware (VibeStudio\'s own token).', color: 'border-red-300 bg-red-50' },
                   { n: 2, title: 'Roles', desc: 'ceo / lead / product_owner + AI agent roles (agent_*). Route-level gating.', color: 'border-amber-300 bg-amber-50' },
                   { n: 3, title: 'Database — PostgreSQL RLS', desc: 'RLS on dev_* tables (SET LOCAL app.current_member_id).', color: 'border-blue-300 bg-blue-50' },
                   { n: 4, title: 'Audit', desc: 'logActivity() records every mutation into dev_activity_log.', color: 'border-emerald-300 bg-emerald-50' },
@@ -478,7 +478,7 @@ export default function DevPortalKnowledge() {
             <div className="bg-white border border-gray-200 rounded-xl p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-bold text-gray-900">Design System</h3>
-                <a href="https://www.figma.com/acca-design/" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-lg flex items-center gap-1.5">
+                <a href={process.env.NEXT_PUBLIC_FIGMA_DESIGN_SYSTEM_URL || 'https://www.figma.com/'} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-lg flex items-center gap-1.5">
                   Open Figma
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
                 </a>

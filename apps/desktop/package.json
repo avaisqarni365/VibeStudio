@@ -1,0 +1,29 @@
+{
+  "name": "@vibestudio/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "VibeStudio standalone desktop shell (Electron). Wraps the web app and packages to a Windows .exe.",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json && electron .",
+    "build": "tsc -p tsconfig.json",
+    "prepare:server": "node scripts/prepare-server.mjs",
+    "dist": "npm run prepare:server && tsc -p tsconfig.json && electron-builder",
+    "dist:win": "npm run prepare:server && tsc -p tsconfig.json && electron-builder --win",
+    "dist:mac": "npm run prepare:server && tsc -p tsconfig.json && electron-builder --mac",
+    "dist:linux": "npm run prepare:server && tsc -p tsconfig.json && electron-builder --linux",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "7zip-bin": "^5.2.0",
+    "app-builder-bin": "^4.0.0",
+    "app-builder-lib": "^24.13.3"
+  }
+}

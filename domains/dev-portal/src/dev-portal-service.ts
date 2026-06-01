@@ -132,6 +132,100 @@ export const devPortalService = {
     return project;
   },
 
+  // ── Project context pack (filesystem docs for a managed project) ──
+  // Scaffolds projects/<slug>/ from projects/_template, writes project.json +
+  // standard doc stubs, and links dev_projects.settings.docs_path. Idempotent.
+  async createProjectPack(projectId: string, opts: any = {}) {
+    const { db } = require('@vibestudio/database');
+    const fs = require('fs');
+    const path = require('path');
+    const project = await db('dev_projects').where('id', projectId).first();
+    if (!project) throw new Error('Project not found');
+
+    const slug = (opts.slug || project.key || project.name).toString()
+      .toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+    const root = getProjectRoot();
+    const projectsDir = path.join(root, 'projects');
+    const packDir = path.join(projectsDir, slug);
+    const relPath = `projects/${slug}`;
+
+    if (fs.existsSync(packDir) && !opts.force) {
+      await devPortalService._linkPack(projectId, project, relPath);
+      return { slug, docs_path: relPath, created: false, message: 'Pack already exists' };
+    }
+
+    // Seed folders from the _template if present, else create them.
+    const template = path.join(projectsDir, '_template');
+    fs.mkdirSync(packDir, { recursive: true });
+    if (fs.existsSync(template)) {
+      fs.cpSync(template, packDir, { recursive: true });
+    } else {
+      for (const d of ['sessions', 'prompts', 'bug-history', 'cost-tracking', 'sprint']) {
+        fs.mkdirSync(path.join(packDir, d), { recursive: true });
+      }
+    }
+
+    const stack = (project.tech_stack || '').toString().split(',').map((s: string) => s.trim()).filter(Boolean);
+    fs.writeFileSync(path.join(packDir, 'project.json'), JSON.stringify({
+      slug, name: project.name, key: project.key,
+      repo_path: opts.repo_path || project.repository_url || '',
+      stack, status: project.status || 'active',
+      dev_project_id: project.id,
+      created_at: new Date().toISOString().slice(0, 10),
+    }, null, 2));
+
+    const docs = devPortalService._packDocs(project, slug);
+    const written = ['project.json'];
+    for (const [fname, content] of Object.entries(docs)) {
+      fs.writeFileSync(path.join(packDir, fname), content as string);
+      written.push(fname);
+    }
+
+    await devPortalService._linkPack(projectId, project, relPath);
+    try {
+      await devPortalService.logActivity(opts.actorId || project.lead_id, 'project_pack_created', 'project', projectId, `Generated context pack at ${relPath}`, projectId);
+    } catch {}
+    return { slug, docs_path: relPath, created: true, files: written };
+  },
+
+  async _linkPack(projectId: string, project: any, relPath: string) {
+    const { db } = require('@vibestudio/database');
+    let settings: any = {};
+    try { settings = typeof project.settings === 'string' ? JSON.parse(project.settings) : (project.settings || {}); } catch {}
+    settings.docs_path = relPath;
+    await db('dev_projects').where('id', projectId).update({ settings: JSON.stringify(settings), updated_at: new Date() });
+  },
+
+  _packDocs(project: any, slug: string): Record<string, string> {
+    const name = project.name;
+    const key = project.key || slug.toUpperCase();
+    const stack = project.tech_stack || 'TBD';
+    const repo = project.repository_url || '(set repo_path in project.json)';
+    const today = new Date().toISOString().slice(0, 10);
+    const H = (t: string, lines: string[]) => [
+      `# ${t} — ${name}`, '',
+      `> Generated ${today} by Vibe Engineering Studio. Fill in via the vibe-engineering-studio skill.`, '',
+      ...lines, '',
+    ].join('\n');
+    return {
+      'PROJECT_PLAN.md': H('PROJECT_PLAN', ['## Vision', `One-line goal for ${name}.`, '', '## Stack', stack, '', '## Modules', '- intake → design → build → ship', '', '## Build order', '1. MVP scope  2. v1  3. later']),
+      'PRD.md': H('PRD', ['## Users / roles', '## Problem', '## Success criteria', '## Features (MVP / v1 / later)', '## Risks']),
+      'ARCHITECTURE.md': H('ARCHITECTURE', ['## System overview', '## Frontend modules', '## Backend modules', '## Data model summary', '## Integrations', '## Auth & permissions', '## Deployment']),
+      'DESIGN_SYSTEM.md': H('DESIGN_SYSTEM', ['Layout, palette, components, states, accessibility — generate via skill ref 02.']),
+      'DATABASE_DESIGN.md': H('DATABASE_DESIGN', ['Entities, relationships, indexes, audit fields — generate via skill ref 02.']),
+      'API_CONTRACT.md': H('API_CONTRACT', ['Endpoints, methods, request/response, auth, error format — generate via skill ref 02.']),
+      'TASKS.md': H('TASKS', ['- [ ] Define MVP scope', '- [ ] Set up repo + CI', '- [ ] First feature']),
+      'SPRINT_BOARD.md': H('SPRINT_BOARD', ['Columns: Backlog · Ready · In Progress · AI Coding · Review · Testing · Done · Blocked', '', '## Sprint 1', 'Goal: ...']),
+      'PROMPTS.md': H('PROMPTS', ['Reusable prompts (format = skill templates/prompt-template.md). Durable copies in prompts/.']),
+      'BUGFIX_HISTORY.md': H('BUGFIX_HISTORY', ['Newest first. Fields: date · tool/model · problem · root cause · fix · result · regression · follow-up.']),
+      'TOKEN_COST_LOG.md': H('TOKEN_COST_LOG', ['| Date | Tool | Model | In | Out | Total | Cost | Quality | Notes |', '|---|---|---|---|---|---|---|---|---|', '', 'Never invent token/cost numbers — mark unknown/estimated.']),
+      'memory.md': ['# memory.md — ' + name, '', '## Product Goal', '', '## Current Architecture', 'Stack: ' + stack, '', '## Important Decisions', '', '## Reusable Prompts', '', '## Repeated Bugs and Fixes', '', '## Token / Cost Notes', '', '## Sprint Status', '', '## Next Steps', ''].join('\n'),
+      'CLAUDE.md': ['# CLAUDE.md — ' + name, '', `Project: ${name} (key ${key}). Stack: ${stack}. Repo: ${repo}.`, '', '## Rules', '- Read memory.md + sessions/latest-session.md before coding.', '- API responses { success, data, error }; validate input.', '- Save prompts → prompts/, bugs → bug-history/, decisions → memory.md.', '- Inspect → plan → edit. Minimal diffs. Summarize changed files.', ''].join('\n'),
+      'AGENTS.md': ['# AGENTS.md — ' + name, '', 'Agent roles: coding, qa, security, ops, analytics, release.', 'Context-engineering first; read memory.md + PROJECT_PLAN.md.', 'Claude: inspect→plan→edit. Cursor: small file-scoped. Codex: tests + minimal diff.', ''].join('\n'),
+      '.cursorrules': ['# .cursorrules — ' + name, '', 'Stack: ' + stack + '.', 'Before coding read memory.md + PROJECT_PLAN.md + sessions/latest-session.md.', 'Small file-scoped changes; cite exact files; save prompts/bugs back to this pack.', ''].join('\n'),
+    };
+  },
+
   async updateProject(projectId: string, data: any) {
     const { db } = require('@vibestudio/database');
     const updates: any = { updated_at: new Date() };
@@ -1535,12 +1629,14 @@ ${affectedList || '- No direct dependencies'}
       title: data.title || 'Untitled Prompt',
       prompt: data.prompt,
       response_summary: data.response_summary || null,
-      model: data.model || 'claude-opus-4',
+      model: data.model || 'claude-opus-4-8',
       provider: data.provider || null,
       ai_origin: data.ai_origin || 'dev_portal_chat',
       status: data.status || 'sent',
       prompt_tokens: data.prompt_tokens || 0,
       response_tokens: data.response_tokens || 0,
+      cache_read_tokens: data.cache_read_tokens || 0,
+      cache_write_tokens: data.cache_write_tokens || 0,
       duration_seconds: data.duration_seconds || 0,
       labels: JSON.stringify(data.labels || []),
       metadata: JSON.stringify(data.metadata || {}),
@@ -1576,6 +1672,68 @@ ${affectedList || '- No direct dependencies'}
     await db('dev_prompt_history').where({ id: promptId }).delete();
   },
 
+  // ── A5: PII / secret redaction ──
+  // Pattern-based redaction of secrets before a prompt is shared. Rules run in
+  // order (most-specific first). Pure function — no DB.
+  _redactText(input: string): { redacted: string; findings: { type: string; count: number }[] } {
+    let text = String(input || '');
+    const RULES: { type: string; re: RegExp; repl: string }[] = [
+      { type: 'private_key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, repl: '[REDACTED_PRIVATE_KEY]' },
+      { type: 'aws_access_key', re: /\bAKIA[0-9A-Z]{16}\b/g, repl: '[REDACTED_AWS_KEY]' },
+      { type: 'jwt', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, repl: '[REDACTED_JWT]' },
+      { type: 'github_token', re: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, repl: '[REDACTED_GITHUB_TOKEN]' },
+      { type: 'slack_token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, repl: '[REDACTED_SLACK_TOKEN]' },
+      { type: 'google_api_key', re: /\bAIza[0-9A-Za-z_-]{35}\b/g, repl: '[REDACTED_GOOGLE_KEY]' },
+      { type: 'api_key', re: /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}\b/g, repl: '[REDACTED_API_KEY]' },
+      { type: 'bearer_token', re: /\bBearer\s+[A-Za-z0-9._-]{10,}/g, repl: 'Bearer [REDACTED_TOKEN]' },
+      { type: 'secret_assignment', re: /\b([A-Za-z0-9_]*(?:SECRET|PASSWORD|PASSWD|TOKEN|API[_-]?KEY|ACCESS[_-]?KEY))\b(\s*[:=]\s*)(['"]?)[^\s'"]{4,}\3/gi, repl: '$1$2[REDACTED]' },
+      { type: 'credit_card', re: /\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{1,4}\b/g, repl: '[REDACTED_CC]' },
+      { type: 'email', re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, repl: '[REDACTED_EMAIL]' },
+      { type: 'ipv4', re: /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g, repl: '[REDACTED_IP]' },
+    ];
+    const findings: { type: string; count: number }[] = [];
+    for (const r of RULES) {
+      const count = (text.match(r.re) || []).length;
+      if (count) { text = text.replace(r.re, r.repl); findings.push({ type: r.type, count }); }
+    }
+    return { redacted: text, findings };
+  },
+
+  // Preview redaction without persisting (used by the Prompt Builder + Prompts list).
+  previewRedaction(text: string) {
+    const { redacted, findings } = devPortalService._redactText(text);
+    return { redacted, findings, total: findings.reduce((s, f) => s + f.count, 0), hasPii: findings.length > 0 };
+  },
+
+  // Redact a stored prompt in place (prompt + response_summary) and flag it.
+  async redactPrompt(promptId: string) {
+    const { db } = require('@vibestudio/database');
+    const row = await db('dev_prompt_history').where({ id: promptId }).first();
+    if (!row) throw new Error('Prompt not found');
+    const p = devPortalService._redactText(row.prompt || '');
+    const r = devPortalService._redactText(row.response_summary || '');
+    const findings = [...p.findings, ...r.findings];
+    await db('dev_prompt_history').where({ id: promptId }).update({
+      prompt: p.redacted, response_summary: row.response_summary != null ? r.redacted : null, is_pii_redacted: true,
+    });
+    return { id: promptId, is_pii_redacted: true, findings, total: findings.reduce((s, f) => s + f.count, 0) };
+  },
+
+  // Toggle sharing — blocks sharing a prompt that still contains un-redacted PII.
+  async setPromptShared(promptId: string, isShared: boolean) {
+    const { db } = require('@vibestudio/database');
+    const row = await db('dev_prompt_history').where({ id: promptId }).first();
+    if (!row) throw new Error('Prompt not found');
+    if (isShared && !row.is_pii_redacted) {
+      const { findings } = devPortalService._redactText(`${row.prompt || ''}\n${row.response_summary || ''}`);
+      if (findings.length) throw new Error(`Redact PII before sharing — found ${findings.map((f: any) => `${f.count} ${f.type}`).join(', ')}.`);
+      // No PII detected → mark redacted so the gate stays consistent.
+      await db('dev_prompt_history').where({ id: promptId }).update({ is_pii_redacted: true });
+    }
+    await db('dev_prompt_history').where({ id: promptId }).update({ is_shared: !!isShared });
+    return db('dev_prompt_history').where({ id: promptId }).first();
+  },
+
   async getPromptStats(projectId: string) {
     const { db } = require('@vibestudio/database');
     const prompts = await db('dev_prompt_history').where('project_id', projectId);
@@ -1585,6 +1743,8 @@ ${affectedList || '- No direct dependencies'}
     const byDevice: Record<string, number> = {};
     const byStatus: Record<string, number> = {};
     let totalTokens = 0;
+    let totalCacheRead = 0;
+    let totalCacheWrite = 0;
 
     for (const p of prompts) {
       const aid = p.author_id || 'unknown';
@@ -1596,6 +1756,8 @@ ${affectedList || '- No direct dependencies'}
       else if (p.os) byDevice[p.os] = (byDevice[p.os] || 0) + 1;
       byStatus[p.status || 'sent'] = (byStatus[p.status || 'sent'] || 0) + 1;
       totalTokens += (p.prompt_tokens || 0) + (p.response_tokens || 0);
+      totalCacheRead += p.cache_read_tokens || 0;
+      totalCacheWrite += p.cache_write_tokens || 0;
     }
 
     // Fill author names
@@ -1605,7 +1767,7 @@ ${affectedList || '- No direct dependencies'}
       for (const m of members) { if (byAuthor[m.id]) byAuthor[m.id].name = m.display_name || m.name; }
     }
 
-    return { total: prompts.length, byAuthor, byTemplate, byDevice, byStatus, totalTokens };
+    return { total: prompts.length, byAuthor, byTemplate, byDevice, byStatus, totalTokens, totalCacheRead, totalCacheWrite };
   },
 
   // ── Code File Browser (multi-project) ──
@@ -1640,6 +1802,597 @@ ${affectedList || '- No direct dependencies'}
       }
     } catch {}
     return projects;
+  },
+
+  // IDE Monitor (#5): read-only git snapshot of a local repo — branch, ahead/
+  // behind, changed files, recent commits, diff size, TODO/FIXME count. git is
+  // run via execFileSync with arg arrays (no shell) inside the given cwd. The
+  // route enforces the path allowlist; this also verifies the dir exists.
+  async getRepoStatus(repoPathInput?: string) {
+    const fs = require('fs');
+    const path = require('path');
+    const { execFileSync } = require('child_process');
+    const target = path.normalize(repoPathInput ? path.resolve(repoPathInput) : getProjectRoot());
+    if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error('Path does not exist or is not a directory');
+
+    const git = (args: string[]): string => {
+      try {
+        return execFileSync('git', args, { cwd: target, timeout: 8000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+      } catch { return ''; }
+    };
+
+    if (git(['rev-parse', '--is-inside-work-tree']) !== 'true') {
+      return { path: target, isRepo: false };
+    }
+
+    const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']) || '(detached)';
+    const upstream = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']) || null;
+    let ahead = 0, behind = 0;
+    if (upstream) {
+      const lr = git(['rev-list', '--left-right', '--count', `${upstream}...HEAD`]).split(/\s+/);
+      if (lr.length === 2) { behind = parseInt(lr[0], 10) || 0; ahead = parseInt(lr[1], 10) || 0; }
+    }
+
+    const porcelain = git(['status', '--porcelain=v1']);
+    const changed = porcelain
+      ? porcelain.split('\n').filter(Boolean).map(l => ({ status: l.slice(0, 2).trim(), file: l.slice(3) }))
+      : [];
+
+    const SEP = '';
+    const logRaw = git(['log', '-8', `--pretty=format:%h${SEP}%an${SEP}%ar${SEP}%s`]);
+    const commits = logRaw
+      ? logRaw.split('\n').map(l => { const [hash, author, when, subject] = l.split(SEP); return { hash, author, when, subject }; })
+      : [];
+
+    // TODO/FIXME scan over changed files only (cap 50, skip large/binary).
+    let todos = 0;
+    for (const c of changed.slice(0, 50)) {
+      try {
+        const f = path.join(target, c.file);
+        if (fs.existsSync(f) && fs.statSync(f).isFile() && fs.statSync(f).size < 500_000) {
+          todos += (fs.readFileSync(f, 'utf8').match(/\b(TODO|FIXME)\b/g) || []).length;
+        }
+      } catch {}
+    }
+
+    return {
+      path: target, isRepo: true, branch, upstream, ahead, behind,
+      changedCount: changed.length, changed: changed.slice(0, 200), commits,
+      diff: { unstaged: git(['diff', '--shortstat']), staged: git(['diff', '--cached', '--shortstat']) },
+      todos, scannedAt: new Date().toISOString(),
+    };
+  },
+
+  // A4/#5 live watcher: poll git status on an interval (+ a best-effort fs.watch
+  // accelerator) and invoke onChange only when a cheap change-signature differs.
+  // Returns a stop() fn. Backs the SSE endpoint /ops/monitor/stream so the IDE
+  // Monitor updates live instead of manual refresh. No DB access.
+  watchRepo(target: string | undefined, onChange: (snap: any) => void, opts: any = {}) {
+    const fs = require('fs');
+    const path = require('path');
+    const dir = target ? path.resolve(target) : getProjectRoot();
+    const intervalMs = Math.max(Number(opts.intervalMs) || 3000, 1000);
+    let stopped = false, lastSig: string | null = null, debounce: any = null, watcher: any = null;
+    const sigOf = (s: any) => s?.isRepo
+      ? [s.branch, s.ahead, s.behind, s.changedCount, s.commits?.[0]?.hash || '', (s.changed || []).map((c: any) => c.status + c.file).join(','), s.todos].join('|')
+      : `norepo:${s?.path || dir}`;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const snap = await devPortalService.getRepoStatus(dir);
+        const sig = sigOf(snap);
+        if (sig !== lastSig) { lastSig = sig; onChange(snap); }
+      } catch { /* transient git/fs error — retry next tick */ }
+    };
+    const timer = setInterval(tick, intervalMs);
+    tick(); // emit the initial snapshot immediately
+    try {
+      watcher = fs.watch(dir, { recursive: true }, (_evt: string, file: string) => {
+        if (file && /(^|[\\/])(node_modules|\.git|\.next|dist|dist-bundle|release)([\\/]|$)/.test(String(file))) return;
+        if (debounce) return;
+        debounce = setTimeout(() => { debounce = null; tick(); }, 400);
+      });
+    } catch { /* recursive fs.watch unsupported on this platform — poll covers it */ }
+    return () => { stopped = true; clearInterval(timer); if (debounce) clearTimeout(debounce); if (watcher) { try { watcher.close(); } catch {} } };
+  },
+
+  // ── A4: commit / PR / CI ↔ task bridge ──
+  // Scan a repo's recent commits, extract task keys (e.g. VIBE-11) from each
+  // commit subject (+ the branch name for the HEAD commit), and upsert a
+  // 'commit' link on every matching dev_task. Read-only against git (execFile,
+  // no shell); the route enforces the path allowlist.
+  async scanRepoTaskLinks(opts: any = {}) {
+    const fs = require('fs');
+    const path = require('path');
+    const { execFileSync } = require('child_process');
+    const { db } = require('@vibestudio/database');
+    const target = path.normalize(opts.repoPath ? path.resolve(opts.repoPath) : getProjectRoot());
+    if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error('Path does not exist or is not a directory');
+
+    const git = (args: string[]): string => {
+      try { return execFileSync('git', args, { cwd: target, timeout: 8000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); }
+      catch { return ''; }
+    };
+    if (git(['rev-parse', '--is-inside-work-tree']) !== 'true') {
+      return { isRepo: false, path: target, scanned: 0, linked: 0, matchedKeys: [], unmatchedKeys: [] };
+    }
+
+    const limit = Math.min(Math.max(Number(opts.limit) || 50, 1), 200);
+    const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']) || '';
+    const repo = path.basename(target);
+    const SEP = '\x1f', REC = '\x1e';
+    const raw = git(['log', `-${limit}`, `--pretty=format:%H${SEP}%an${SEP}%aI${SEP}%s${REC}`]);
+    const commits = raw
+      ? raw.split(REC).map(s => s.trim()).filter(Boolean).map(line => { const [sha, author, iso, subject] = line.split(SEP); return { sha, author, iso, subject: subject || '' }; })
+      : [];
+
+    const KEY = /\b([A-Z][A-Z0-9]+-\d+)\b/g;
+    const branchKeys = (branch.match(KEY) || []).map(k => k.toUpperCase());
+
+    const tasks = await db('dev_tasks').whereNotNull('task_key').select('id', 'task_key');
+    const keyToTask: Record<string, any> = {};
+    for (const t of tasks) keyToTask[String(t.task_key || '').toUpperCase()] = t;
+
+    const matched = new Set<string>(), unmatched = new Set<string>();
+    let linked = 0;
+    for (let i = 0; i < commits.length; i++) {
+      const c = commits[i];
+      const keys = new Set<string>([
+        ...((c.subject.match(KEY) || []).map((k: string) => k.toUpperCase())),
+        ...(i === 0 ? branchKeys : []), // branch key applies to the HEAD commit only
+      ]);
+      for (const k of keys) {
+        const task = keyToTask[k];
+        if (!task) { unmatched.add(k); continue; }
+        matched.add(k);
+        const rowdata = {
+          task_id: task.id, link_type: 'commit', ref: c.sha,
+          title: (c.subject || '').slice(0, 500), branch, repo, author: c.author,
+          external_at: c.iso || null, created_by: opts.createdBy || null, updated_at: db.fn.now(),
+        };
+        try {
+          const existing = await db('dev_task_links').where({ task_id: task.id, link_type: 'commit', ref: c.sha }).first();
+          if (existing) await db('dev_task_links').where({ id: existing.id }).update(rowdata);
+          else { await db('dev_task_links').insert(rowdata); linked++; }
+        } catch { /* RLS / race — skip this row */ }
+      }
+    }
+    return { isRepo: true, path: target, branch, repo, scanned: commits.length, linked, matchedKeys: [...matched].sort(), unmatchedKeys: [...unmatched].sort() };
+  },
+
+  // All links for a task, grouped by type, with the latest CI status surfaced.
+  async getTaskLinks(taskId: string) {
+    const { db } = require('@vibestudio/database');
+    const rows = await db('dev_task_links').where({ task_id: taskId }).orderByRaw('external_at DESC NULLS LAST, created_at DESC');
+    const byType: Record<string, any[]> = { commit: [], pr: [], ci: [] };
+    for (const r of rows) (byType[r.link_type] || (byType[r.link_type] = [])).push(r);
+    return { total: rows.length, byType, latestCi: byType.ci?.[0]?.status || null, links: rows };
+  },
+
+  // Add/update a PR or CI (or manual commit) link — used by the UI form and by
+  // CI webhooks. Upserts on (task_id, link_type, ref).
+  async upsertTaskLink(taskId: string, payload: any = {}, createdBy: string | null = null) {
+    const { db } = require('@vibestudio/database');
+    const type = String(payload.link_type || '').toLowerCase();
+    if (!['commit', 'pr', 'ci'].includes(type)) throw new Error('link_type must be commit, pr, or ci');
+    const ref = String(payload.ref || '').trim();
+    if (!ref) throw new Error('ref is required');
+    const row: any = {
+      task_id: taskId, link_type: type, ref,
+      title: payload.title || null, url: payload.url || null, status: payload.status || null,
+      branch: payload.branch || null, repo: payload.repo || null, author: payload.author || null,
+      external_at: payload.external_at || null, updated_at: db.fn.now(),
+    };
+    const existing = await db('dev_task_links').where({ task_id: taskId, link_type: type, ref }).first();
+    if (existing) { await db('dev_task_links').where({ id: existing.id }).update(row); return { ...existing, ...row, id: existing.id }; }
+    const [created] = await db('dev_task_links').insert({ ...row, created_by: createdBy }).returning('*');
+    return created;
+  },
+
+  async deleteTaskLink(id: string) {
+    const { db } = require('@vibestudio/database');
+    const link = await db('dev_task_links').where({ id }).first();
+    if (!link) return { id, deleted: false };
+    await db('dev_task_links').where({ id }).del();
+    return { id, deleted: true, task_id: link.task_id };
+  },
+
+  // ── A3: prompt A/B experiments ──
+  async createExperiment(projectId: string, payload: any = {}, createdBy: string | null = null) {
+    const { db } = require('@vibestudio/database');
+    const name = String(payload.name || '').trim();
+    if (!name) throw new Error('name is required');
+    const variants = Array.isArray(payload.variants) ? payload.variants.filter((v: any) => String(v?.prompt || '').trim()) : [];
+    if (variants.length < 2) throw new Error('at least 2 variants with prompts are required');
+    const [exp] = await db('dev_prompt_experiments').insert({
+      project_id: projectId || null, task_id: payload.task_id || null, name,
+      hypothesis: payload.hypothesis || null, status: 'open', created_by: createdBy,
+    }).returning('*');
+    const LABELS = 'ABCDEFGH';
+    await db('dev_prompt_variants').insert(variants.map((v: any, i: number) => ({
+      experiment_id: exp.id, label: String(v.label || LABELS[i] || `V${i + 1}`).slice(0, 24),
+      prompt: String(v.prompt), provider: v.provider || null, model: v.model || null,
+    })));
+    return devPortalService.getExperiment(exp.id);
+  },
+
+  async listExperiments(projectId: string) {
+    const { db } = require('@vibestudio/database');
+    const exps = await db('dev_prompt_experiments').where({ project_id: projectId }).orderBy('created_at', 'desc');
+    if (!exps.length) return [];
+    const counts = await db('dev_prompt_variants').whereIn('experiment_id', exps.map((e: any) => e.id))
+      .select('experiment_id').count({ variants: 'id' }).sum({ runs: 'runs' }).groupBy('experiment_id');
+    const cmap: Record<string, any> = Object.fromEntries(counts.map((c: any) => [c.experiment_id, c]));
+    return exps.map((e: any) => ({ ...e, variant_count: Number(cmap[e.id]?.variants) || 0, total_runs: Number(cmap[e.id]?.runs) || 0 }));
+  },
+
+  async getExperiment(id: string) {
+    const { db } = require('@vibestudio/database');
+    const exp = await db('dev_prompt_experiments').where({ id }).first();
+    if (!exp) return null;
+    const variants = await db('dev_prompt_variants').where({ experiment_id: id }).orderBy('label', 'asc');
+    const decorated = variants.map((v: any) => {
+      const runs = Number(v.runs) || 0;
+      return {
+        ...v,
+        avg_cost: runs ? Number(v.total_cost) / runs : null,
+        avg_duration_ms: runs ? Math.round(Number(v.total_duration_ms) / runs) : null,
+        avg_rating: v.rating_count ? Math.round((v.rating_sum / v.rating_count) * 10) / 10 : null,
+        avg_tokens: runs ? Math.round((Number(v.total_prompt_tokens) + Number(v.total_response_tokens)) / runs) : null,
+      };
+    });
+    return { ...exp, variants: decorated };
+  },
+
+  async deleteExperiment(id: string) {
+    const { db } = require('@vibestudio/database');
+    await db('dev_prompt_experiments').where({ id }).del();
+    return { id, deleted: true };
+  },
+
+  async decideExperimentWinner(experimentId: string, variantId: string) {
+    const { db } = require('@vibestudio/database');
+    const variant = await db('dev_prompt_variants').where({ id: variantId, experiment_id: experimentId }).first();
+    if (!variant) throw new Error('variant does not belong to this experiment');
+    await db('dev_prompt_experiments').where({ id: experimentId }).update({ status: 'decided', winner_variant_id: variantId, updated_at: db.fn.now() });
+    return devPortalService.getExperiment(experimentId);
+  },
+
+  async rateVariant(variantId: string, rating: number) {
+    const { db } = require('@vibestudio/database');
+    const r = Math.max(1, Math.min(5, Math.round(Number(rating) || 0)));
+    const variant = await db('dev_prompt_variants').where({ id: variantId }).first();
+    if (!variant) throw new Error('variant not found');
+    await db('dev_prompt_variants').where({ id: variantId }).update({
+      rating_sum: Number(variant.rating_sum) + r, rating_count: Number(variant.rating_count) + 1, updated_at: db.fn.now(),
+    });
+    return { variant_id: variantId, rating: r };
+  },
+
+  // Run a variant: live via the AI provider, or record a manual result (paste
+  // output produced elsewhere). Updates the variant's aggregates, costs the run
+  // with budget.json prices, and logs to dev_prompt_history (ai_origin ab_test).
+  async runVariant(variantId: string, opts: any = {}, createdBy: string | null = null) {
+    const { db } = require('@vibestudio/database');
+    const variant = await db('dev_prompt_variants').where({ id: variantId }).first();
+    if (!variant) throw new Error('variant not found');
+    const exp = await db('dev_prompt_experiments').where({ id: variant.experiment_id }).first();
+
+    let content: string, model: string, promptTokens: number, responseTokens: number, cacheRead = 0, cacheWrite = 0, durationMs: number;
+    if (opts.manual && (opts.manual.response !== undefined || opts.manual.prompt_tokens !== undefined)) {
+      const m = opts.manual;
+      content = String(m.response || '');
+      model = variant.model || 'manual';
+      promptTokens = Number(m.prompt_tokens) || 0;
+      responseTokens = Number(m.response_tokens) || 0;
+      cacheRead = Number(m.cache_read_tokens) || 0;
+      cacheWrite = Number(m.cache_write_tokens) || 0;
+      durationMs = Number(m.duration_ms) || 0;
+    } else {
+      const ai = require('./ai-provider-service');
+      const provider = variant.provider;
+      if (!provider || !ai.AI_PROVIDERS[provider]) throw new Error('variant has no valid provider; set one or run with a manual result');
+      const isLocal = ai.AI_PROVIDERS[provider]?.authHeader === 'none';
+      const apiKey = isLocal ? '' : await ai.getProviderKey(provider);
+      if (!apiKey && !isLocal) throw new Error(`No API key configured for ${ai.AI_PROVIDERS[provider]?.name || provider} — add one in AI Providers, or run with a manual result.`);
+      const started = Date.now();
+      const result = await ai.chatCompletion(provider, apiKey, variant.model, [{ role: 'user', content: variant.prompt }], { maxTokens: Math.min(Number(opts.max_tokens) || 2048, 8192) });
+      durationMs = Date.now() - started;
+      content = result.content || '';
+      model = result.model || variant.model;
+      promptTokens = result.promptTokens || 0;
+      responseTokens = result.responseTokens || 0;
+      cacheRead = result.cacheReadTokens || 0;
+      cacheWrite = result.cacheWriteTokens || 0;
+    }
+
+    const budget = await devPortalService.getBudget();
+    const { costOf } = devPortalService._costEngine(budget);
+    const cost = costOf({ model, in_tokens: promptTokens, out_tokens: responseTokens, cache_read: cacheRead, cache_write: cacheWrite });
+
+    await db('dev_prompt_variants').where({ id: variantId }).update({
+      runs: Number(variant.runs) + 1,
+      total_prompt_tokens: Number(variant.total_prompt_tokens) + promptTokens,
+      total_response_tokens: Number(variant.total_response_tokens) + responseTokens,
+      total_cache_read: Number(variant.total_cache_read) + cacheRead,
+      total_cache_write: Number(variant.total_cache_write) + cacheWrite,
+      total_cost: Number(variant.total_cost) + cost,
+      total_duration_ms: Number(variant.total_duration_ms) + durationMs,
+      last_response: content.slice(0, 2000),
+      updated_at: db.fn.now(),
+    });
+
+    // Best-effort prompt-history log (so the run shows in usage + cost rollups).
+    if (exp?.project_id) {
+      try {
+        await devPortalService.createPrompt(exp.project_id, createdBy, {
+          task_id: exp.task_id || null, template: 'ab_test', ai_origin: 'ab_test',
+          provider: variant.provider || null, title: `A/B ${exp.name} · ${variant.label}`,
+          prompt: variant.prompt, response_summary: content.slice(0, 500), model,
+          status: 'completed', prompt_tokens: promptTokens, response_tokens: responseTokens,
+          cache_read_tokens: cacheRead, cache_write_tokens: cacheWrite,
+          duration_seconds: Math.round(durationMs / 1000), labels: ['ab_test', variant.label],
+        }, {});
+      } catch { /* logging is non-critical */ }
+    }
+
+    return { variant_id: variantId, model, cost, prompt_tokens: promptTokens, response_tokens: responseTokens, cache_read: cacheRead, cache_write: cacheWrite, duration_ms: durationMs, response: content.slice(0, 2000) };
+  },
+
+  // Cost Tracker: serve .claude/cost-tracking/budget.json (caps + per-model
+  // prices). Returns sane defaults if the file is missing/malformed.
+  async getBudget() {
+    const fs = require('fs');
+    const path = require('path');
+    const defaults = { monthly_usd_cap: 0, alert_at_percent: 80, currency: 'USD', per_model: {} as Record<string, any> };
+    try {
+      const file = path.join(getProjectRoot(), '.claude', 'cost-tracking', 'budget.json');
+      if (fs.existsSync(file)) {
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+        return { ...defaults, ...parsed };
+      }
+    } catch {}
+    return defaults;
+  },
+
+  // Shared cost engine: maps a model id → USD/1M prices (from budget.json
+  // per_model, substring match, first wins; built-in fallback otherwise) and
+  // costs a token bucket. Cache read ≈0.1× input, cache write ≈1.25× input
+  // (Anthropic 5-min TTL); local models ≈ $0. Identical math to usage.tsx.
+  _costEngine(budget: any) {
+    const FALLBACK: [string, number, number][] = [
+      ['opus', 5, 25], ['sonnet', 3, 15], ['haiku', 1, 5], ['gpt-4o-mini', 0.15, 0.6], ['gpt-4o', 2.5, 10],
+      ['gpt-4', 5, 15], ['deepseek', 0.27, 1.1], ['moonshot', 0.6, 2.5],
+      ['llama', 0, 0], ['mixtral', 0, 0], ['qwen', 0, 0], ['mistral', 0, 0], ['phi', 0, 0], ['ollama', 0, 0],
+    ];
+    const fromBudget: [string, number, number][] = Object.entries(budget?.per_model || {})
+      .map(([k, v]: any) => [k.toLowerCase(), Number(v.in_per_mtok) || 0, Number(v.out_per_mtok) || 0]);
+    const table = [...fromBudget, ...FALLBACK];
+    const price = (model: string) => { const m = (model || '').toLowerCase(); const hit = table.find(([k]) => m.includes(k)); return hit ? { in: hit[1], out: hit[2] } : { in: 0, out: 0 }; };
+    const costOf = (r: any) => { const p = price(r.model); return ((+r.in_tokens || 0) * p.in + (+r.out_tokens || 0) * p.out + (+r.cache_read || 0) * p.in * 0.1 + (+r.cache_write || 0) * p.in * 1.25) / 1e6; };
+    return { price, costOf };
+  },
+
+  // Cost-per-feature ROI (A7): join AI spend (dev_prompt_history) to tasks +
+  // sprints. Costs each (task, model) token bucket with budget.json prices and
+  // aggregates per task and per sprint. Same cost formula as usage.tsx.
+  async getProjectCostRoi(projectId: string) {
+    const { db } = require('@vibestudio/database');
+    const budget = await devPortalService.getBudget();
+    const { costOf } = devPortalService._costEngine(budget);
+
+    const rows = await db('dev_prompt_history')
+      .where('project_id', projectId)
+      .select('task_id', 'model')
+      .sum({ in_tokens: 'prompt_tokens', out_tokens: 'response_tokens', cache_read: 'cache_read_tokens', cache_write: 'cache_write_tokens' })
+      .count({ prompts: 'id' })
+      .groupBy('task_id', 'model');
+
+    const taskAgg: Record<string, { cost: number; prompts: number; tokens: number }> = {};
+    const untracked = { cost: 0, prompts: 0 };
+    for (const r of rows) {
+      const c = costOf(r);
+      const tok = (+r.in_tokens || 0) + (+r.out_tokens || 0) + (+r.cache_read || 0) + (+r.cache_write || 0);
+      if (!r.task_id) { untracked.cost += c; untracked.prompts += Number(r.prompts) || 0; continue; }
+      const t = taskAgg[r.task_id] || (taskAgg[r.task_id] = { cost: 0, prompts: 0, tokens: 0 });
+      t.cost += c; t.prompts += Number(r.prompts) || 0; t.tokens += tok;
+    }
+
+    let tasks: any[] = [];
+    const taskIds = Object.keys(taskAgg);
+    if (taskIds.length) {
+      const trows = await db('dev_tasks')
+        .leftJoin('dev_sprints', 'dev_tasks.sprint_id', 'dev_sprints.id')
+        .whereIn('dev_tasks.id', taskIds)
+        .select('dev_tasks.id', 'dev_tasks.task_key', 'dev_tasks.title', 'dev_tasks.status', 'dev_tasks.story_points', 'dev_tasks.sprint_id', 'dev_sprints.name as sprint_name');
+      tasks = trows.map((t: any) => ({
+        id: t.id, task_key: t.task_key, title: t.title, status: t.status,
+        story_points: t.story_points, sprint_id: t.sprint_id, sprint_name: t.sprint_name,
+        ...taskAgg[t.id],
+        cost_per_point: t.story_points ? taskAgg[t.id].cost / t.story_points : null,
+      }));
+      tasks.sort((a, b) => b.cost - a.cost);
+    }
+
+    const bySprint: Record<string, any> = {};
+    for (const t of tasks) {
+      const key = t.sprint_id || 'none';
+      const s = bySprint[key] || (bySprint[key] = { sprint_id: t.sprint_id || null, sprint: t.sprint_name || 'No sprint', cost: 0, points: 0, tasks: 0 });
+      s.cost += t.cost; s.points += Number(t.story_points) || 0; s.tasks += 1;
+    }
+    const sprints = Object.values(bySprint)
+      .map((s: any) => ({ ...s, cost_per_point: s.points ? s.cost / s.points : null }))
+      .sort((a: any, b: any) => b.cost - a.cost);
+
+    const totalCost = tasks.reduce((s, t) => s + t.cost, 0) + untracked.cost;
+    return { currency: budget.currency || 'USD', totalCost, untracked, tasks: tasks.slice(0, 50), sprints };
+  },
+
+  // ── Monthly cost rollups (Cost Tracker exports) ──
+  // Distinct YYYY-MM buckets that have AI usage, newest first, each flagged with
+  // whether a rollup file already exists under .claude/cost-tracking/.
+  async listRollupMonths() {
+    const { db } = require('@vibestudio/database');
+    const fs = require('fs');
+    const path = require('path');
+    const rows = await db('dev_prompt_history')
+      .select(db.raw("to_char(created_at, 'YYYY-MM') as month"))
+      .count({ prompts: 'id' })
+      .groupByRaw("to_char(created_at, 'YYYY-MM')")
+      .orderByRaw("to_char(created_at, 'YYYY-MM') desc");
+    const dir = path.join(getProjectRoot(), '.claude', 'cost-tracking');
+    return rows.map((r: any) => ({
+      month: r.month,
+      prompts: Number(r.prompts) || 0,
+      hasFile: (() => { try { return fs.existsSync(path.join(dir, `${r.month}.md`)); } catch { return false; } })(),
+    }));
+  },
+
+  // Compute a platform-wide cost rollup for one month (default: current month).
+  // One grouped query over (author, project, provider, model); cost derived per
+  // row via the shared engine, then folded into every dimension.
+  async getMonthlyRollup(month?: string) {
+    const { db } = require('@vibestudio/database');
+    const budget = await devPortalService.getBudget();
+    const { costOf } = devPortalService._costEngine(budget);
+
+    const mo = (month && /^\d{4}-\d{2}$/.test(month)) ? month : new Date().toISOString().slice(0, 7);
+    const [y, m] = mo.split('-').map(Number);
+    const start = `${mo}-01`;
+    const end = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10); // first day of next month
+
+    const rows = await db('dev_prompt_history')
+      .whereRaw('created_at >= ? AND created_at < ?', [start, end])
+      .select('author_id', 'project_id', 'provider', 'model')
+      .sum({ in_tokens: 'prompt_tokens', out_tokens: 'response_tokens', cache_read: 'cache_read_tokens', cache_write: 'cache_write_tokens' })
+      .count({ prompts: 'id' })
+      .groupBy('author_id', 'project_id', 'provider', 'model');
+
+    const totals = { prompts: 0, in_tokens: 0, out_tokens: 0, cache_read: 0, cache_write: 0, cost: 0 };
+    const byModel: Record<string, any> = {}, byProvider: Record<string, any> = {}, byMember: Record<string, any> = {}, byProject: Record<string, any> = {};
+    const bump = (bucket: Record<string, any>, key: string, seed: any, r: any, cost: number) => {
+      const b = bucket[key] || (bucket[key] = { ...seed, prompts: 0, in_tokens: 0, out_tokens: 0, cache_read: 0, cache_write: 0, cost: 0 });
+      b.prompts += Number(r.prompts) || 0; b.in_tokens += +r.in_tokens || 0; b.out_tokens += +r.out_tokens || 0;
+      b.cache_read += +r.cache_read || 0; b.cache_write += +r.cache_write || 0; b.cost += cost;
+    };
+    for (const r of rows) {
+      const cost = costOf(r);
+      totals.prompts += Number(r.prompts) || 0; totals.in_tokens += +r.in_tokens || 0; totals.out_tokens += +r.out_tokens || 0;
+      totals.cache_read += +r.cache_read || 0; totals.cache_write += +r.cache_write || 0; totals.cost += cost;
+      bump(byModel, r.model || 'unknown', { model: r.model || 'unknown' }, r, cost);
+      bump(byProvider, r.provider || 'unknown', { provider: r.provider || 'unknown' }, r, cost);
+      bump(byMember, r.author_id || 'none', { member_id: r.author_id || null }, r, cost);
+      bump(byProject, r.project_id || 'none', { project_id: r.project_id || null }, r, cost);
+    }
+
+    // Resolve member + project names (best-effort; ids fall back if RLS hides rows).
+    const memberIds = Object.values(byMember).map((b: any) => b.member_id).filter(Boolean);
+    const projectIds = Object.values(byProject).map((b: any) => b.project_id).filter(Boolean);
+    const members = memberIds.length ? await db('dev_team_members').whereIn('id', memberIds).select('id', 'name', 'email') : [];
+    const projects = projectIds.length ? await db('dev_projects').whereIn('id', projectIds).select('id', 'name', 'key') : [];
+    const mName: Record<string, any> = Object.fromEntries(members.map((m: any) => [m.id, m]));
+    const pName: Record<string, any> = Object.fromEntries(projects.map((p: any) => [p.id, p]));
+    Object.values(byMember).forEach((b: any) => { const m = mName[b.member_id]; b.name = m?.name || '(unknown)'; b.email = m?.email || null; });
+    Object.values(byProject).forEach((b: any) => { const p = pName[b.project_id]; b.name = p?.name || '(none)'; b.key = p?.key || null; });
+
+    const sortCost = (o: Record<string, any>) => Object.values(o).sort((a: any, b: any) => b.cost - a.cost);
+    const cap = Number(budget.monthly_usd_cap) || 0;
+    return {
+      month: mo, currency: budget.currency || 'USD',
+      monthly_usd_cap: cap, budget_pct: cap > 0 ? Math.round((totals.cost / cap) * 1000) / 10 : null,
+      totals,
+      byModel: sortCost(byModel), byProvider: sortCost(byProvider),
+      byMember: sortCost(byMember), byProject: sortCost(byProject),
+    };
+  },
+
+  // Render a rollup to markdown (the .claude/cost-tracking/YYYY-MM.md format).
+  renderMonthlyRollupMarkdown(r: any): string {
+    const usd = (n: number) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const num = (n: number) => (Number(n) || 0).toLocaleString('en-US');
+    const t = r.totals;
+    const row = (cells: (string | number)[]) => `| ${cells.join(' | ')} |`;
+    const lines: string[] = [
+      `# Cost rollup — ${r.month}`, '',
+      `> Generated from \`dev_prompt_history\` with \`.claude/cost-tracking/budget.json\` prices.`,
+      `> Cache reads ≈0.1× input, writes ≈1.25×; local models = $0. Indicative.`, '',
+      `**Total: ${usd(t.cost)}** · ${num(t.prompts)} prompts · ${num(t.in_tokens)} in / ${num(t.out_tokens)} out tokens · ${num(t.cache_read)} cache-read / ${num(t.cache_write)} cache-write`,
+    ];
+    if (r.monthly_usd_cap > 0) lines.push('', `Budget: ${usd(t.cost)} / ${usd(r.monthly_usd_cap)} cap (**${r.budget_pct}%**).`);
+    lines.push('', '## By model', '', row(['Model', 'Prompts', 'In', 'Out', 'Cost']), row(['---', '---:', '---:', '---:', '---:']),
+      ...r.byModel.map((b: any) => row([b.model, num(b.prompts), num(b.in_tokens), num(b.out_tokens), usd(b.cost)])));
+    lines.push('', '## By provider', '', row(['Provider', 'Prompts', 'Cost']), row(['---', '---:', '---:']),
+      ...r.byProvider.map((b: any) => row([b.provider, num(b.prompts), usd(b.cost)])));
+    lines.push('', '## By member', '', row(['Member', 'Email', 'Prompts', 'Cost']), row(['---', '---', '---:', '---:']),
+      ...r.byMember.map((b: any) => row([b.name, b.email || '—', num(b.prompts), usd(b.cost)])));
+    lines.push('', '## By project', '', row(['Project', 'Key', 'Prompts', 'Cost']), row(['---', '---', '---:', '---:']),
+      ...r.byProject.map((b: any) => row([b.name, b.key || '—', num(b.prompts), usd(b.cost)])));
+    lines.push('');
+    return lines.join('\n');
+  },
+
+  // Compute + persist a month's rollup to .claude/cost-tracking/<month>.md.
+  async writeMonthlyRollup(month?: string) {
+    const fs = require('fs');
+    const path = require('path');
+    const rollup = await devPortalService.getMonthlyRollup(month);
+    const dir = path.join(getProjectRoot(), '.claude', 'cost-tracking');
+    fs.mkdirSync(dir, { recursive: true });
+    const rel = `.claude/cost-tracking/${rollup.month}.md`;
+    fs.writeFileSync(path.join(getProjectRoot(), rel), devPortalService.renderMonthlyRollupMarkdown(rollup));
+    return { path: rel, rollup };
+  },
+
+  // Auto bug-capture (A4/A6): write a bug-history entry from an error + the
+  // current git changes, and return a ready-to-paste fix prompt. The entry
+  // lands in the studio's .claude/bug-history/ so memory search indexes it.
+  async captureBug(opts: any = {}) {
+    const fs = require('fs');
+    const path = require('path');
+    const root = getProjectRoot();
+    const title = (opts.title || '').toString().trim() || 'Untitled bug';
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'bug';
+    const today = new Date().toISOString().slice(0, 10);
+
+    let repo: any = null;
+    try { if (opts.repoPath) repo = await devPortalService.getRepoStatus(opts.repoPath); } catch {}
+    const changedList = repo?.changed?.length
+      ? repo.changed.map((c: any) => `- \`${c.status || '·'}\` ${c.file}`).join('\n')
+      : '- (none / not a git repo)';
+    const lastCommit = repo?.commits?.[0] ? `${repo.commits[0].hash} ${repo.commits[0].subject}` : 'n/a';
+    const where = opts.file ? `${opts.file}${opts.line ? ':' + opts.line : ''}` : '(unknown)';
+    const errorText = (opts.error || '(paste the exact error / failing behavior)').toString().slice(0, 2000);
+
+    const body = [
+      `# ${title}`, '',
+      `### ${today} · ${title}`,
+      `- **Tool/model:** ${opts.tool || 'Claude Code'}`,
+      `- **Repo:** ${repo?.path || opts.repoPath || '(none)'} · branch ${repo?.branch || 'n/a'}`,
+      `- **Where:** ${where}`,
+      `- **Status:** open`, '',
+      '**Error / symptom**', '```', errorText, '```', '',
+      '**Changed files at capture**', changedList, '',
+      `**Last commit:** ${lastCommit}`, '',
+      '**Root cause:** _TBD_', '**Fix:** _TBD_', '**Regression risk:** _TBD_', '',
+    ].join('\n');
+
+    const dir = path.join(root, '.claude', 'bug-history');
+    fs.mkdirSync(dir, { recursive: true });
+    const rel = `.claude/bug-history/${today}-${slug}.md`;
+    fs.writeFileSync(path.join(root, rel), body);
+
+    const fixPrompt = [
+      'Role: debugger on VibeStudio. Inspect the relevant files FIRST, propose a plan, then make the smallest safe change.',
+      `Repo: ${repo?.path || opts.repoPath || ''} (branch ${repo?.branch || 'n/a'}).`,
+      `Where: ${where}.`,
+      `Error / failing behavior:\n${errorText}`,
+      `Changed files at capture:\n${changedList}`,
+      'Constraints: keep dev_portal_token auth + RLS on dev_* intact; API responses { success, data, error }; minimal diff; do not change unrelated systems.',
+      `When done: summarize the root cause + fix and append them to ${rel}.`,
+    ].join('\n\n');
+
+    try { await devPortalService.logActivity(opts.actorId, 'bug_captured', 'bug', null, `Captured bug: ${title}`, null); } catch {}
+    return { file: rel, prompt: fixPrompt, branch: repo?.branch || null, changedCount: repo?.changedCount || 0 };
   },
 
   async addLinkedProject(projectId: string, name: string, linkedPath: string) {

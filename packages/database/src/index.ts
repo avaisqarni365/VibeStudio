@@ -106,7 +106,6 @@ export interface TenantScopedEntity extends BaseEntity {
 }
 
 export * from "./repositories";
-export * from "./posting-accounts";
 
 // ─── Schema-aware safe insert / safe update ──────────────────────────────
 //

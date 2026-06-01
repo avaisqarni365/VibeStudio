@@ -1,0 +1,12 @@
+{
+  "slug": "CHANGE-ME",
+  "name": "Change Me",
+  "repo_path": "",
+  "stack": [],
+  "status": "active",
+  "sprint_length_days": 14,
+  "integrations": { "claude": true, "cursor": false, "codex": false, "jira": false, "github": false },
+  "data_sensitivity": "internal",
+  "dev_project_id": null,
+  "docs": ["PROJECT_PLAN.md", "PRD.md", "ARCHITECTURE.md", "DESIGN_SYSTEM.md", "DATABASE_DESIGN.md", "API_CONTRACT.md", "TASKS.md", "SPRINT_BOARD.md", "PROMPTS.md", "BUGFIX_HISTORY.md", "TOKEN_COST_LOG.md", "memory.md", "CLAUDE.md", "AGENTS.md", ".cursorrules"]
+}

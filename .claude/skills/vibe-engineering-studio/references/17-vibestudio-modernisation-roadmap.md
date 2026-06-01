@@ -17,12 +17,19 @@ the backlog, ranked by my estimate of impact × ease.
 > for prompt engineering and context tooling. These come BEFORE the
 > Tier 1 cleanups when there's a conflict.
 
-### D1. Standalone desktop app (.exe)
+### D1. Standalone desktop app (.exe) — ✅ built & validated (2026-06-01)
+> `npm run desktop:build` produces `release/VibeStudio Setup 0.0.1.exe` (NSIS) +
+> `VibeStudio 0.0.1.exe` (portable). Bundled API boots, `/health` ok. 7 first-run
+> blockers fixed (see BUGFIX_HISTORY 2026-06-01). Windows: pre-extract
+> `winCodeSign-2.6.0` sans `*.dylib` into electron-builder's cache + build with
+> `CSC_IDENTITY_AUTO_DISCOVERY=false` (unsigned). Remaining: full app launch vs a
+> real DB, icon, code signing.
+
 - **Why:** the headline deliverable — VibeStudio as an installable desktop tool, not just a browser app.
-- **Where:** new `apps/desktop/` shell (Electron or Tauri) wrapping the Next.js web app + a bundled/edge API, or pointing at a local API.
-- **Effort:** 1-2 weeks for a first signed build (Win first, then Mac/Linux).
-- **Acceptance:** `npm run desktop:build` produces a runnable `.exe`; login + board + AI Prompt Builder work offline-capable against a local/remote API; auto-update channel wired.
-- **Open questions:** Electron vs Tauri; bundle the API or call a remote one; how `dev_portal_token` is stored on desktop (OS keychain vs file).
+- **Where:** `apps/desktop/` — **Electron** shell (chosen over Tauri: pure-JS toolchain, wraps Next.js directly). `electron/main.ts` + `preload.ts`, `electron-builder.yml` (Windows NSIS + portable). Root scripts `desktop:dev` / `desktop:build`.
+- **Done:** native window + single-instance + external-link handling + secure webPreferences + app menu; **self-contained packaging** — `next build` (`output: 'standalone'`) + esbuild API bundle (inlines `@vibestudio/*` TS, externalises knex/pg), assembled by `apps/desktop/scripts/prepare-server.mjs` into `resources/{web,api}` and spawned on :3100/:4100 via Electron's Node (`ELECTRON_RUN_AS_NODE`). Auth secrets auto-generated in `userData`; DB creds via `userData/db.env`.
+- **Remaining:** validate with one real `npm install && npm run desktop:build` (Next monorepo-standalone trace + esbuild externals are the likely tweak points); embedded/local DB so it needs no remote Postgres; `electron-updater`; `dev_portal_token` in OS keychain; icon + code signing.
+- **Acceptance:** `npm run desktop:build` produces a runnable `.exe` that boots its own API + web and works against a reachable DB.
 
 ### D2. Mobile app
 - **Why:** second priority shell — the EAS/mobile scaffolding (`dev_mobile_*` tables, mobile-deploy-service) already exists.

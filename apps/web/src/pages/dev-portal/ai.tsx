@@ -9,7 +9,7 @@ Project: VibeStudio — a standalone Vibe Code Prompt Studio (project management
 Stack: Node.js/Express/Knex (PostgreSQL) + React/Next.js 14 (Pages Router)/Tailwind. TypeScript monorepo (Turborepo). API on :4100, web on :3100, DB tunnel on 127.0.0.1:5545.
 
 Key rules you MUST follow:
-- Auth: dev_portal_token (httpOnly JWT cookie + Bearer fallback). Never validate acca_token. Roles: ceo / lead / product_owner + agent_* roles.
+- Auth: dev_portal_token (httpOnly JWT cookie + Bearer fallback) — VibeStudio's own token. Roles: ceo / lead / product_owner + agent_* roles.
 - DB: all tables prefixed dev_*. snake_case columns. UUID PKs. RLS enabled — direct scripts SET LOCAL app.current_member_id.
 - API response: { success: boolean, data?: T, error?: { code, message } }. Base: /api/v1/dev-portal.
 - Frontend: DevPortalLayout + useDevAuth() (devApi helper). React hooks: ALL useState/useEffect before any conditional return.
@@ -152,18 +152,18 @@ export default function DevPortalAI() {
                 {messages.length === 0 && (
                   <div className="text-center py-16">
                     <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mx-auto mb-4"><span className="text-3xl">🤖</span></div>
-                    <h2 className="text-base font-bold text-gray-900">ACCA AI Assistant</h2>
+                    <h2 className="text-base font-bold text-gray-900">VibeStudio AI Assistant</h2>
                     <p className="text-xs text-gray-500 mt-1 max-w-md mx-auto">
                       {isConfigured
-                        ? `Connected to ${currentProvider?.name}. Ask anything about the ACCA project — architecture, code, German tax rules, or generate code.`
+                        ? `Connected to ${currentProvider?.name}. Ask anything about your project — architecture, code, prompt engineering, or generate code.`
                         : 'No API key configured. Go to the Providers tab to add your key, or use this as a prompt builder.'}
                     </p>
                     {/* Quick prompts */}
                     <div className="grid grid-cols-2 gap-2 mt-6 max-w-lg mx-auto">
                       {[
-                        'Explain the 4-layer data isolation architecture',
-                        'Generate a new API endpoint for budget management',
-                        'How does the invoicing status model work?',
+                        'Explain this project\'s architecture',
+                        'Generate a new API endpoint for a feature',
+                        'Draft a prompt for a refactor task',
                         'Write a migration for a notifications_preferences table',
                       ].map(q => (
                         <button key={q} onClick={() => { setInput(q); }} className="text-left px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-2xs text-gray-600 hover:bg-indigo-50 hover:border-indigo-200 transition-colors">
@@ -221,7 +221,7 @@ export default function DevPortalAI() {
                 <div className="flex items-center gap-4 mt-2 text-2xs text-gray-400">
                   <label className="flex items-center gap-1.5 cursor-pointer">
                     <input type="checkbox" checked={useSystemPrompt} onChange={e => setUseSystemPrompt(e.target.checked)} className="rounded border-gray-300 text-indigo-600 w-3 h-3" />
-                    ACCA context
+                    Project context
                   </label>
                   <label className="flex items-center gap-1.5">
                     Temp: <input type="range" min="0" max="1" step="0.1" value={temperature} onChange={e => setTemperature(Number(e.target.value))} className="w-16 h-1" /> {temperature}

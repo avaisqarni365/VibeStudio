@@ -146,7 +146,12 @@ export default function TaskDetailPage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [sprints, setSprints] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'details' | 'prompt' | 'knowledge' | 'docs' | 'activity'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'prompt' | 'knowledge' | 'docs' | 'activity' | 'git'>('details');
+  const [links, setLinks] = useState<any>(null);
+  const [linksBusy, setLinksBusy] = useState(false);
+  const [scanMsg, setScanMsg] = useState('');
+  const [newLink, setNewLink] = useState<{ link_type: string; ref: string; title: string; url: string; status: string }>({ link_type: 'pr', ref: '', title: '', url: '', status: 'open' });
+  const [piiScan, setPiiScan] = useState<any>(null);
   const [taskActivity, setTaskActivity] = useState<any[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [promptText, setPromptText] = useState('');
@@ -155,6 +160,9 @@ export default function TaskDetailPage() {
   const [timeLogHours, setTimeLogHours] = useState('');
 
   const [projectId, setProjectId] = useState('');
+  const [memoryContext, setMemoryContext] = useState('');
+  const [memoryHits, setMemoryHits] = useState<any[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
 
   useEffect(() => {
     if (!user || !id) return;
@@ -174,10 +182,50 @@ export default function TaskDetailPage() {
   }, [user, id, activeProjectId]);
 
   useEffect(() => {
-    if (task) setPromptText(buildFullPrompt(task, selectedTemplate));
-  }, [task, selectedTemplate]);
+    if (task) setPromptText(buildFullPrompt(task, selectedTemplate, memoryContext));
+  }, [task, selectedTemplate, memoryContext]);
 
   const loadTask = () => { if (id) devApi('get', `/tasks/${id}`).then(r => setTask(r.data.data)); };
+
+  // A4: commit / PR / CI links.
+  useEffect(() => { setLinks(null); setScanMsg(''); }, [id]);
+  useEffect(() => { if (task && activeTab === 'git' && !links) loadLinks(); /* eslint-disable-next-line */ }, [task, activeTab]);
+  const loadLinks = async () => {
+    if (!id) return;
+    setLinksBusy(true);
+    try { const r = await devApi('get', `/tasks/${id}/links`); if (r.data?.success) setLinks(r.data.data); }
+    catch (e) { console.warn('links load failed', e); } finally { setLinksBusy(false); }
+  };
+  const scanCommits = async () => {
+    setLinksBusy(true); setScanMsg('');
+    try {
+      const r = await devApi('post', '/ops/scan-commits', {}); // default = project root
+      const d = r.data?.data;
+      setScanMsg(d?.isRepo
+        ? `Scanned ${d.scanned} commits · linked ${d.linked} · matched ${d.matchedKeys.join(', ') || 'none'}${d.unmatchedKeys.length ? ` · unmatched ${d.unmatchedKeys.join(', ')}` : ''}`
+        : 'Project root is not a git repo — point the IDE Monitor at a repo first.');
+      await loadLinks();
+    } catch (e: any) { setScanMsg(e?.response?.data?.error?.message || 'Scan failed'); } finally { setLinksBusy(false); }
+  };
+  const addLink = async () => {
+    if (!newLink.ref.trim() || !id) return;
+    setLinksBusy(true);
+    try { await devApi('post', `/tasks/${id}/links`, newLink); setNewLink({ link_type: newLink.link_type, ref: '', title: '', url: '', status: newLink.link_type === 'ci' ? 'success' : 'open' }); await loadLinks(); }
+    catch (e) { console.warn('add link failed', e); } finally { setLinksBusy(false); }
+  };
+  const removeLink = async (linkId: string) => {
+    setLinksBusy(true);
+    try { await devApi('delete', `/task-links/${linkId}`); await loadLinks(); }
+    catch (e) { console.warn('remove link failed', e); } finally { setLinksBusy(false); }
+  };
+
+  // A5: scan the draft prompt for secrets/PII before copying or sharing.
+  const scanSecrets = async () => {
+    try { const r = await devApi('post', '/redact/preview', { text: promptText }); setPiiScan(r.data?.data || null); }
+    catch (e) { console.warn('pii scan failed', e); }
+  };
+  const applyRedaction = () => { if (piiScan?.redacted != null) { setPromptText(piiScan.redacted); setPiiScan(null); } };
+  useEffect(() => { setPiiScan(null); }, [promptText]);
 
   const updateField = async (field: string, value: any) => {
     await devApi('put', `/tasks/${id}`, { [field]: value });
@@ -207,6 +255,27 @@ export default function TaskDetailPage() {
         labels,
         metadata: { task_key: task.task_key, component: task.component, story_points: task.story_points },
       }).catch(() => {}); // fire-and-forget
+    }
+  };
+
+  // Attach top-k relevant memory (local RAG over .claude/ + docs) to the prompt.
+  const attachMemory = async () => {
+    if (!task || memoryLoading) return;
+    if (memoryContext) { setMemoryContext(''); setMemoryHits([]); return; } // toggle off
+    setMemoryLoading(true);
+    try {
+      const query = `${task.title}\n${task.description || ''}`.slice(0, 1000);
+      const r = await devApi('post', '/memory/search', { query, k: 5, project_slug: undefined });
+      const results = r.data?.data?.results || [];
+      setMemoryHits(results);
+      const block = results.length
+        ? results.map((h: any, i: number) => `${i + 1}. [${h.source}] (score ${h.score})\n${h.snippet}`).join('\n\n')
+        : 'No relevant memory found.';
+      setMemoryContext(`${block}\n\n(retrieved via ${r.data?.data?.mode || 'search'})`);
+    } catch (e: any) {
+      alert('Memory search failed: ' + (e?.response?.data?.error?.message || 'unknown') + '. Run POST /memory/index first (needs Ollama for embeddings; lexical fallback otherwise).');
+    } finally {
+      setMemoryLoading(false);
     }
   };
 
@@ -270,6 +339,7 @@ export default function TaskDetailPage() {
         <div className="flex gap-1 mb-5 border-b border-gray-200 pb-px">
           {[
             { key: 'details', label: 'Details & Comments', icon: '📝' },
+            { key: 'git', label: 'Git & CI', icon: '🔗' },
             { key: 'activity', label: 'Activity', icon: '📊' },
             { key: 'prompt', label: 'AI Prompt Builder', icon: '🤖' },
             { key: 'knowledge', label: 'Module Knowledge', icon: '📚' },
@@ -394,12 +464,30 @@ export default function TaskDetailPage() {
                 <div className="flex items-center justify-between mt-3">
                   <p className="text-2xs text-gray-400">{promptText.length} characters · {promptText.split('\n').length} lines</p>
                   <div className="flex gap-2">
-                    <button onClick={() => setPromptText(buildFullPrompt(task, selectedTemplate))} className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg">Regenerate</button>
+                    <button onClick={attachMemory} disabled={memoryLoading}
+                      title="Search local memory (.claude/ + docs) and attach the most relevant context"
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors disabled:opacity-50 ${memoryContext ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'border-gray-200 text-gray-500 hover:text-gray-700'}`}>
+                      {memoryLoading ? '… Searching' : memoryContext ? `🧠 Memory ✓ (${memoryHits.length})` : '🧠 Attach memory'}
+                    </button>
+                    <button onClick={scanSecrets} title="Scan the prompt for emails, API keys, tokens, IPs and other secrets"
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${piiScan ? (piiScan.hasPii ? 'bg-rose-50 border-rose-300 text-rose-700' : 'bg-emerald-50 border-emerald-300 text-emerald-700') : 'border-gray-200 text-gray-500 hover:text-gray-700'}`}>
+                      {piiScan ? (piiScan.hasPii ? `🛡 ${piiScan.total} secret${piiScan.total === 1 ? '' : 's'}` : '🛡 Clean') : '🛡 Scan secrets'}
+                    </button>
+                    <button onClick={() => setPromptText(buildFullPrompt(task, selectedTemplate, memoryContext))} className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg">Regenerate</button>
                     <button onClick={copyPrompt} className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-colors ${copied ? 'bg-emerald-500 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
                       {copied ? '✓ Copied!' : '📋 Copy Prompt'}
                     </button>
                   </div>
                 </div>
+                {piiScan?.hasPii && (
+                  <div className="mt-3 bg-rose-50 border border-rose-200 rounded-xl p-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-2xs font-semibold text-rose-700">⚠ Possible secrets: {piiScan.findings.map((f: any) => `${f.count} ${f.type.replace(/_/g, ' ')}`).join(', ')}</p>
+                      <button onClick={applyRedaction} className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-2xs font-semibold rounded-lg shrink-0">Redact in prompt</button>
+                    </div>
+                    <p className="text-2xs text-rose-600/80 mt-1">Redact before copying to a public/shared context.</p>
+                  </div>
+                )}
               </Card>
 
               {/* Attached Images for Prompt */}
@@ -502,7 +590,7 @@ export default function TaskDetailPage() {
                     { label: 'DB Conventions', text: '\n\n## Database Conventions\n- Columns: snake_case, UUID PKs (gen_random_uuid), timestamps (created_at, updated_at)\n- Flexible data: JSONB\n- All tables prefixed dev_\n- Next migration: 081 (knex up/down + hasTable / hasColumn guards)\n' },
                     { label: 'React Hooks Rule', text: '\n\n## React Hooks Rule\nAll useState, useEffect, useMemo, useCallback MUST come before any conditional return (return null, return loading).\nNever put hooks after an early return.\n' },
                     { label: 'AI Providers', text: '\n\n## AI Providers\n- Supported: Anthropic / OpenAI / DeepSeek / Moonshot / Groq\n- Prefer the latest Claude models\n- API returns 503 if no provider key is configured\n- Each run logged to dev_prompt_history\n' },
-                    { label: 'Auth Pattern', text: '\n\n## Auth Pattern\n- DevPortal JWT in the dev_portal_token cookie (httpOnly)\n- useDevAuth() returns { user } (no acca_token, no orgId)\n- Bearer fallback supported for API clients\n' },
+                    { label: 'Auth Pattern', text: '\n\n## Auth Pattern\n- DevPortal JWT in the dev_portal_token cookie (httpOnly)\n- useDevAuth() returns { user } (no external token, no orgId)\n- Bearer fallback supported for API clients\n' },
                     { label: 'Full Project Stats', text: '\n\n## VibeStudio Project Stats\n- Turborepo + npm workspaces, Node >= 20, TypeScript strict\n- API: Express on :4100, Web: Next.js Pages Router on :3100, DB tunnel on 127.0.0.1:5545\n- Single dev-portal route + single service (domains/dev-portal/src/dev-portal-service.ts), 29 dev_* tables\n- Repo: github.com/codes-ai/vibestudio · Demo identity: @codes-ai.uk\n' },
                   ].map((ctx, i) => (
                     <button key={i} onClick={() => setPromptText(prev => prev + ctx.text)}
@@ -690,6 +778,64 @@ export default function TaskDetailPage() {
                 </Card>
               ))}
             </>)}
+
+            {activeTab === 'git' && (<>
+              <Card title="Commits, PRs & CI for this task">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-2xs text-gray-500">
+                    Commits whose message contains <span className="font-mono text-gray-700">{task.task_key}</span> link here automatically.
+                    {links?.latestCi && <span className="ml-1">Latest CI: <span className={`px-1.5 py-0.5 rounded text-white text-2xs ${ciBadge(links.latestCi)}`}>{links.latestCi}</span></span>}
+                  </p>
+                  <button onClick={scanCommits} disabled={linksBusy} className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-2xs font-semibold rounded-lg shrink-0">
+                    {linksBusy ? 'Working…' : '↻ Scan repo commits'}
+                  </button>
+                </div>
+                {scanMsg && <p className="text-2xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 mb-3">{scanMsg}</p>}
+                {!links || links.total === 0 ? (
+                  <p className="text-sm text-gray-400 py-6 text-center">No linked commits, PRs, or CI runs yet. Reference <span className="font-mono">{task.task_key}</span> in a commit and scan, or add a PR/CI link below.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {links.links.map((l: any) => (
+                      <div key={l.id} className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-50 group">
+                        <span className="text-sm shrink-0" title={l.link_type}>{l.link_type === 'commit' ? '🔨' : l.link_type === 'pr' ? '🔀' : '⚙️'}</span>
+                        <span className="text-2xs font-mono text-gray-400 shrink-0 w-16 truncate" title={l.ref}>{l.link_type === 'commit' ? l.ref.slice(0, 8) : l.ref}</span>
+                        <span className="text-xs text-gray-700 flex-1 truncate" title={l.title || ''}>{l.title || '—'}</span>
+                        {l.status && <span className={`text-2xs px-1.5 py-0.5 rounded text-white shrink-0 ${l.link_type === 'pr' ? prBadge(l.status) : ciBadge(l.status)}`}>{l.status}</span>}
+                        {l.branch && <span className="text-2xs text-gray-400 font-mono shrink-0 hidden md:inline">{l.branch}</span>}
+                        {l.url && <a href={l.url} target="_blank" rel="noopener" className="text-2xs text-indigo-500 hover:text-indigo-700 shrink-0">open ↗</a>}
+                        <button onClick={() => removeLink(l.id)} className="text-2xs text-gray-300 hover:text-rose-500 shrink-0 opacity-0 group-hover:opacity-100">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              <Card title="Add a PR / CI / commit link">
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+                  <div className="md:col-span-1">
+                    <label className="text-2xs text-gray-400 block mb-0.5">Type</label>
+                    <select value={newLink.link_type} onChange={e => setNewLink({ ...newLink, link_type: e.target.value, status: e.target.value === 'ci' ? 'success' : e.target.value === 'pr' ? 'open' : '' })} className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-2xs">
+                      <option value="pr">PR</option><option value="ci">CI</option><option value="commit">Commit</option>
+                    </select>
+                  </div>
+                  <div className="md:col-span-1">
+                    <label className="text-2xs text-gray-400 block mb-0.5">Ref</label>
+                    <input value={newLink.ref} onChange={e => setNewLink({ ...newLink, ref: e.target.value })} placeholder={newLink.link_type === 'pr' ? '#42' : newLink.link_type === 'ci' ? 'run-id' : 'sha'} className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-2xs" />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-2xs text-gray-400 block mb-0.5">Title</label>
+                    <input value={newLink.title} onChange={e => setNewLink({ ...newLink, title: e.target.value })} placeholder="optional" className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-2xs" />
+                  </div>
+                  <div className="md:col-span-1">
+                    <label className="text-2xs text-gray-400 block mb-0.5">Status</label>
+                    <input value={newLink.status} onChange={e => setNewLink({ ...newLink, status: e.target.value })} placeholder={newLink.link_type === 'ci' ? 'success' : 'open'} className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-2xs" />
+                  </div>
+                  <button onClick={addLink} disabled={linksBusy || !newLink.ref.trim()} className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 text-white text-2xs font-semibold rounded-lg md:col-span-1">Add link</button>
+                </div>
+                <input value={newLink.url} onChange={e => setNewLink({ ...newLink, url: e.target.value })} placeholder="URL (optional) — https://github.com/.../pull/42" className="w-full mt-2 px-2 py-1.5 border border-gray-200 rounded-lg text-2xs" />
+                <p className="text-2xs text-gray-400 mt-2">CI systems can POST here too: <span className="font-mono">POST /api/v1/dev-portal/tasks/{task.task_key}/links {'{ link_type:"ci", ref, status }'}</span>.</p>
+              </Card>
+            </>)}
           </div>
 
           {/* RIGHT SIDEBAR */}
@@ -810,6 +956,15 @@ export default function TaskDetailPage() {
   );
 }
 
+function ciBadge(status?: string): string {
+  const s = (status || '').toLowerCase();
+  return s === 'success' ? 'bg-emerald-500' : s === 'failed' ? 'bg-rose-500' : (s === 'pending' || s === 'running') ? 'bg-amber-500' : 'bg-gray-400';
+}
+function prBadge(status?: string): string {
+  const s = (status || '').toLowerCase();
+  return s === 'merged' ? 'bg-purple-500' : s === 'open' ? 'bg-emerald-500' : s === 'closed' ? 'bg-rose-500' : 'bg-gray-400';
+}
+
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -830,7 +985,7 @@ function PropCard({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-function buildFullPrompt(task: any, templateId: string | null): string {
+function buildFullPrompt(task: any, templateId: string | null, memoryContext?: string): string {
   const labels = (() => { try { return typeof task.labels === 'string' ? JSON.parse(task.labels || '[]') : (task.labels || []); } catch { return []; } })();
   const domainKey = labels.find((l: string) => DOMAIN_KB[l]) || '';
   const domain = DOMAIN_KB[domainKey];
@@ -884,6 +1039,10 @@ Pages: ${domain.pages.join(', ')}
 5. AI features: check process.env.<PROVIDER>_API_KEY first; prefer latest Claude models
 6. All API responses: { success, data, error }
 7. React hooks before any conditional return`;
+
+  if (memoryContext) {
+    prompt += `\n\n── Relevant Memory (local search over .claude/ + docs) ──\n${memoryContext}`;
+  }
 
   return prompt;
 }

@@ -47,7 +47,7 @@ export default function DevPortalLogin() {
 
   return (
     <>
-      <Head><title>Dev Portal — Login</title></Head>
+      <Head><title>VibeStudio — Sign In</title></Head>
       <div className="min-h-screen bg-[#0f1117] flex items-center justify-center">
         {/* Background pattern */}
         <div className="absolute inset-0 opacity-5">
@@ -58,10 +58,10 @@ export default function DevPortalLogin() {
           {/* Logo */}
           <div className="text-center mb-8">
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/20">
-              <span className="text-white text-2xl font-black">A</span>
+              <span className="text-white text-2xl font-black">V</span>
             </div>
-            <h1 className="text-2xl font-bold text-white">ACCA Dev Portal</h1>
-            <p className="text-sm text-gray-500 mt-1">Development Team Workspace</p>
+            <h1 className="text-2xl font-bold text-white">VibeStudio</h1>
+            <p className="text-sm text-gray-500 mt-1">Vibe Engineering Studio</p>
           </div>
 
           {/* Login Card */}
@@ -135,10 +135,7 @@ export default function DevPortalLogin() {
 
           {/* Footer */}
           <p className="text-center text-2xs text-gray-600 mt-6">
-            This workspace is restricted to the ACCA development team.
-          </p>
-          <p className="text-center mt-2">
-            <a href="/login" className="text-2xs text-blue-500 hover:text-blue-400 transition-colors">← Back to ACCA Platform Login</a>
+            VibeStudio — standalone Vibe Engineering Studio.
           </p>
         </div>
       </div>

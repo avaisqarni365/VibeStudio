@@ -9,8 +9,8 @@ const logger = createLogger({ service: 'mobile-deploy' });
 // ── Encryption (AES-256-GCM) ──
 function getEncryptionKey(): Buffer {
   const crypto = require('crypto');
-  const secret = process.env.MOBILE_DEPLOY_KEY || process.env.JWT_SECRET || 'acca-mobile-deploy-default-key';
-  return crypto.scryptSync(secret, 'acca-mobile-salt', 32);
+  const secret = process.env.MOBILE_DEPLOY_KEY || process.env.JWT_SECRET || 'vibestudio-mobile-deploy-default-key';
+  return crypto.scryptSync(secret, 'vibestudio-mobile-salt', 32);
 }
 
 function encrypt(plaintext: string): { encrypted: string; iv: string; authTag: string } {
@@ -238,7 +238,7 @@ export const mobileDeployService = {
       let tmpSaPath = '';
       if (googleSa && (platform === 'android' || platform === 'both')) {
         const os = require('os');
-        tmpSaPath = path.join(os.tmpdir(), `acca-gsa-${Date.now()}.json`);
+        tmpSaPath = path.join(os.tmpdir(), `vibestudio-gsa-${Date.now()}.json`);
         require('fs').writeFileSync(tmpSaPath, googleSa);
         env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE_PATH = tmpSaPath;
       }
@@ -327,7 +327,7 @@ export const mobileDeployService = {
     let app: any = {}, eas: any = {};
     try { app = JSON.parse(fs.readFileSync(appJson, 'utf-8')); } catch {}
     try { eas = JSON.parse(fs.readFileSync(easJson, 'utf-8')); } catch {}
-    return { app, eas, version: app?.expo?.version || '1.0.0', name: app?.expo?.name || 'ACCA Mobile' };
+    return { app, eas, version: app?.expo?.version || '1.0.0', name: app?.expo?.name || 'VibeStudio Mobile' };
   },
 
   async updateAppVersion(version: string, buildNumber?: number) {

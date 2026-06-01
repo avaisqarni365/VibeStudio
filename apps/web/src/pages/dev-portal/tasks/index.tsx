@@ -136,7 +136,7 @@ export default function DevPortalTasks() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-gray-900">Tasks</h1>
-            <p className="text-xs text-gray-500 mt-0.5">{tasks.length} tasks in ACCA project</p>
+            <p className="text-xs text-gray-500 mt-0.5">{tasks.length} tasks</p>
           </div>
           <button onClick={() => setShowCreate(true)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-2">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
@@ -177,18 +177,18 @@ export default function DevPortalTasks() {
         {showCreate && (
           <div className="bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
             <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900">New Task — ACCA Project</h3>
+              <h3 className="text-sm font-semibold text-gray-900">New Task</h3>
               <button onClick={() => setShowCreate(false)} className="text-gray-400 hover:text-gray-600">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
             <div className="p-5 space-y-4">
-              <input value={newTask.title} onChange={e => setNewTask({ ...newTask, title: e.target.value })} placeholder="Task title — e.g. 'Add recurring invoice scheduler'"
+              <input value={newTask.title} onChange={e => setNewTask({ ...newTask, title: e.target.value })} placeholder="Task title — e.g. 'Add prompt A/B test export'"
                 className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" />
 
               {/* Domain Selection — Key feature */}
               <div>
-                <label className="text-2xs text-gray-500 font-semibold uppercase tracking-wider mb-2 block">ACCA Domain (auto-generates context)</label>
+                <label className="text-2xs text-gray-500 font-semibold uppercase tracking-wider mb-2 block">Domain (auto-generates context)</label>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 max-h-48 overflow-y-auto">
                   {VIBE_DOMAINS.map(d => (
                     <button key={d.name} type="button" onClick={() => onDomainChange(d.name)}

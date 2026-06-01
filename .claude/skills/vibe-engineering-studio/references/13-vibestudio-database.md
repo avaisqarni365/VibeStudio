@@ -5,7 +5,7 @@ description: "Use when working with VibeStudio's Postgres schema — 29 tables a
 
 # VibeStudio — Database
 
-## 29 tables, all prefixed `dev_*`
+## 32 tables, all prefixed `dev_*`
 
 ### Core (8) — created in migration 047
 - `dev_team_members` — users (humans + AI agents); has `password_hash`, `refresh_token_hash`, `is_ai_agent`, `agent_type`
@@ -43,6 +43,13 @@ description: "Use when working with VibeStudio's Postgres schema — 29 tables a
 ### Security (1) — migration 074
 - `dev_sessions` — active session tracking for revocation (token_hash, ip, user_agent, is_active, expires_at, revoked_at, revoked_reason)
 
+### VCS/CI bridge (1) — migration 085
+- `dev_task_links` — A4: links a task to commit/PR/CI refs (`link_type` commit|pr|ci, `ref`, `title`, `url`, `status`, `branch`, `repo`, `author`, `external_at`). Unique (task_id, link_type, ref). NOT force-RLS (route-gated like `dev_prompt_history`)
+
+### Prompt A/B (2) — migration 086
+- `dev_prompt_experiments` — A3 experiment header (name, hypothesis, status open|decided, winner_variant_id, project_id, task_id)
+- `dev_prompt_variants` — per-variant prompt + run aggregates (runs, total_*_tokens, total_cost, total_duration_ms, rating_sum/count, last_response). Both route-gated via the experiment's project
+
 ## Migrations
 
 | # | File | What |
@@ -59,16 +66,37 @@ description: "Use when working with VibeStudio's Postgres schema — 29 tables a
 | 079 | `079_reenable_dev_portal_rls.js` | Re-enable with proper context |
 | 080 | `080_dev_tasks_fractional_hours.js` | Allow decimal hours |
 | 081 | `081_rebrand_ceo_email.js` | Forward-correct host-app identity (CEO + agent emails, baseline wiki pages) post-extraction |
+| 082 | `082_rebrand_default_project.js` | Rebrand the seeded default project "ACCA Platform" → "VibeStudio" (VIBE) |
+| 083 | `083_dev_prompt_cache_tokens.js` | `cache_read_tokens` + `cache_write_tokens` on `dev_prompt_history` (Cost Tracker) |
+| 084 | `084_dev_prompt_actor_columns.js` | `provider`/`ai_origin`/`actor_email`/`actor_role` on `dev_prompt_history` (were missing — ACCA migration 130 never extracted; `/me/usage` needs them) |
+| 085 | `085_dev_task_links.js` | A4 commit/PR/CI ↔ task bridge — `dev_task_links` table |
+| 086 | `086_dev_prompt_experiments.js` | A3 prompt A/B — `dev_prompt_experiments` + `dev_prompt_variants` |
 
-**Final state:** RLS enabled. Direct DB scripts MUST set
-`app.current_member_id` per transaction:
+**Final state:** RLS enabled. The GUC the policies read is
+**`app.current_dev_member_id`** (migrations 070/078/079) — NOT
+`app.current_member_id`. Direct DB scripts / per-request middleware MUST set it:
 
 ```js
-await trx.raw(`SET LOCAL app.current_member_id = '${memberId}'`);
+await trx.raw(`SELECT set_config('app.current_dev_member_id', ?, true)`, [memberId]);
 ```
+
+The API sets this automatically in `apps/api/src/middleware/data-isolation.ts`
+(`withRlsTransaction`, mounted by `devAuth`). The `db` proxy in
+`@vibestudio/database` routes queries through the request trx via `dbStore`
+(AsyncLocalStorage). **Note:** `npm run db:seed` does NOT set this — seed under
+RLS needs the GUC set or run as a superuser (RLS bypass).
 
 (NOT `app.current_org_id` — that was ACCA's tenant column. VibeStudio
 isn't multi-tenant.)
+
+**FORCE RLS + project membership (gotcha):** `dev_tasks` and `dev_sprints` use
+**FORCE** row security with a member-scope policy keyed on `dev_project_members`
+— so even the table owner is filtered, and a member with **no row** in
+`dev_project_members` sees **zero** tasks/sprints (board, Cost ROI, etc. all
+empty). The seed must enroll members (`005` now does). When adding a
+project-scoped read, remember the gate is the `dev_project_members` row, not
+just `devAuth`. `dev_prompt_history` is *not* force-RLS, so prompt aggregates
+can appear even when the task join behind them returns nothing.
 
 ## Seed
 
@@ -77,6 +105,8 @@ isn't multi-tenant.)
 - 5 human team members (Sarah, Alex, Maria, Tom, Lisa) with skills
 - 6 AI agents (coding, QA, security, ops, analytics, release)
 - Sample projects + spaces + channels + sprints + tasks
+- **Project memberships** — all 12 members enrolled in `dev_project_members`
+  (REQUIRED for FORCE-RLS on `dev_tasks`/`dev_sprints`; idempotent)
 
 **Default password** logged at the end of seed run. CHANGE on first
 login.
@@ -121,7 +151,14 @@ GROUP BY m, author_id;
 
 - Never edit a shipped migration — write a new one
 - Migration files are numbered `NNN_<slug>.js`
-- Next migration number: **082**
+- Next migration number: **087**
+
+## Local development DB (one command)
+
+`npm run db:seed:local` (`scripts/seed-local.mjs`) = migrate → disable RLS →
+seed → re-enable RLS. The app role owns the tables so it can toggle RLS itself;
+no superuser needed for seeding. One-time superuser step (create role + DB) is in
+`ACTION_PLAN.md`. Note: the task seed is not idempotent — re-running appends tasks.
 - Use `hasTable` / `hasColumn` guards for idempotency
 - Both `up` and `down` mandatory
 

@@ -124,12 +124,30 @@ psql -h 127.0.0.1 -p 5545 -U vibestudio -d vibestudio -c "SELECT 1;"
 
 ```bash
 npm run db:migrate
-# Creates 29 dev_* tables from migrations 047-080
+# Creates the dev_* tables (migrations 047-084)
 
 npm run db:seed
-# Inserts CEO + 5 humans + 6 AI agents
-# Logs default credentials on success — note them
+# Inserts CEO + 5 humans + 6 AI agents — logs default credentials
 ```
+
+> ⚠️ `db:seed` alone FAILS once RLS is enabled (FORCE RLS on some `dev_*` tables;
+> the seed doesn't set `app.current_dev_member_id`). Use the one-command helper
+> below for local dev — it toggles RLS around the seed.
+
+#### Local development DB (no IONOS) — one command
+
+1. **One-time (superuser)** — create the role + database on your local Postgres:
+   ```bash
+   psql -U postgres -c "CREATE ROLE vibestudio LOGIN PASSWORD 'postgres';"
+   psql -U postgres -c "CREATE DATABASE vibestudio OWNER vibestudio;"
+   ```
+2. Point `.env` (or env) at it: `DB_HOST=localhost DB_PORT=5432 DB_NAME=vibestudio DB_USER=vibestudio DB_PASSWORD=postgres`.
+3. **Seed in one command:**
+   ```bash
+   npm run db:seed:local   # migrate → RLS off → seed → RLS on
+   ```
+   Login: `ceo@codes-ai.uk` / `DevPortal@2024` (change on first login).
+   Note: the task seed is not idempotent — re-running appends tasks; drop & recreate the DB for a clean slate.
 
 ### 7. ⏳ First boot
 
@@ -203,16 +221,19 @@ Now that VibeStudio is running, free ACCA from the dev portal. See
 
 Open `D:\VibeStudio` in a fresh VS Code window. Claude auto-loads:
 - `CLAUDE.md` (project-level instructions)
-- `.claude/skills/*.md` (8 skill files: 4 inherited + 4 new VibeStudio-native)
+- `.claude/skills/*.md` (8 VibeStudio-native skill files)
 
-Suggested first modernisation tasks (mentioned in README and
-MIGRATION_GUIDE):
-- Pages Router → App Router (or move to Remix / SolidStart)
+Direction (Tier 0 — set 2026-05-31, top priority):
+- **Standalone desktop app (.exe)** — `apps/desktop/` (Electron/Tauri)
+- **Mobile app** — `apps/mobile/` (Expo/EAS)
+- **Deep Claude integration** — default provider, model picker, prompt caching
+- **Prompt-engineering & context tooling** — git-backed prompt library + A/B
+
+Supporting modernisation tasks:
 - Convert all CJS `require()` to ESM `import`
 - Replace bcryptjs with argon2id
 - Add Playwright e2e
-- Rebuild prompt library as version-controlled artefact
-- Per-model A/B testing UI
+- Pages Router → App Router (optional; behind the desktop/mobile shells)
 - Dark mode by default + design-system rebuild
 
 ### 13. ⏳ Maintain the action plan
@@ -239,7 +260,7 @@ Doc rots otherwise.
 | 11 | Copied + adapted IONOS tunnel scripts (port 5545 to avoid clash with ACCA's 5544) | `scripts/tunnel-*.js`, `scripts/ensure-db-tunnel.js` |
 | 12 | Wrote `CLAUDE.md` (project-level Claude instructions) | root |
 | 13 | Wrote 4 VibeStudio-native skill files | `.claude/skills/vibestudio-*.md` |
-| 14 | Moved (deleted-from-user-global) the 4 acca-dev-portal-* skills so they no longer auto-load in ACCA. They are in `D:\VibeStudio\.claude\skills\` instead | skill move |
+| 14 | Replaced the 4 inherited `acca-dev-portal-*` skills with VibeStudio-native ones (`vibestudio-architecture/auth/prompt-builder/vibe-coding`) | skills |
 | 15 | Wrote deployment files | `deploy/systemd/*.service`, `deploy/nginx/vibestudio.conf`, `deploy/deploy.sh`, `deploy/env.production.example` |
 | 16 | Wrote `.github/workflows/ci.yml` | CI |
 | 17 | Wrote `README.md`, `MIGRATION_GUIDE.md`, this `ACTION_PLAN.md` | docs |

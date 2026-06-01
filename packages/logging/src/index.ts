@@ -10,7 +10,7 @@ const logFormat = winston.format.combine(
 export const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || "info",
   format: logFormat,
-  defaultMeta: { service: "acca" },
+  defaultMeta: { service: "vibestudio" },
   transports: [
     new winston.transports.Console({
       format: winston.format.combine(winston.format.colorize(), winston.format.simple()),
