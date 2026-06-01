@@ -13,7 +13,7 @@
  *   const t0 = Date.now();
  *   const result = await chatCompletion(provider, key, model, messages);
  *   await logAiCall({
- *     aiOrigin: 'ai_bookkeeping',
+ *     aiOrigin: 'dev_portal_chat',
  *     provider,
  *     model,
  *     messages,
@@ -33,15 +33,12 @@ const logger = createLogger({ service: 'ai-call-logger' });
 
 export type AiOrigin =
   | 'dev_portal_chat'
-  | 'ai_bookkeeping'
-  | 'invoice_agent'
-  | 'tax_advisor'
-  | 'voice_agent'
-  | 'vendor_learning'
-  | 'anomaly_detector'
-  | 'ocr_classifier'
-  | 'review_engine'
-  | 'predictive_analysis'
+  | 'prompt_builder'
+  | 'ab_test'
+  | 'memory_search'
+  | 'bug_capture'
+  | 'context_pack'
+  | 'code_review'
   | 'other';
 
 export interface LogAiCallParams {

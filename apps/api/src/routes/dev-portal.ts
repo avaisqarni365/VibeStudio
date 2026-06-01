@@ -523,6 +523,15 @@ router.put('/projects/:projectId', devAuth, requireRole('ceo', 'lead'), async (r
   catch (error) { res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to update project' } }); }
 });
 
+// Delete a project (cascades tasks/sprints/wiki/members/etc.). ceo can delete
+// any project; a lead can delete one they belong to.
+router.delete('/projects/:projectId', devAuth, requireRole('ceo', 'lead'), async (req: any, res) => {
+  try {
+    if (!await requireProjectMembership(req.params.projectId, req.devUser.devMemberId, res, req.devUser.role)) return;
+    res.json({ success: true, data: await devPortalService.deleteProject(req.params.projectId) });
+  } catch (error: any) { res.status(400).json({ success: false, error: { code: 'ERROR', message: error?.message || 'Failed to delete project' } }); }
+});
+
 // Generate (or relink) the filesystem context pack for a project → projects/<slug>/
 router.post('/projects/:projectId/pack', devAuth, requireRole('ceo', 'lead'), async (req: any, res) => {
   try {

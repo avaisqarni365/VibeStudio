@@ -160,6 +160,20 @@ export const devPortalService = {
     return project;
   },
 
+  // Delete a project and everything under it. Most child FKs are ON DELETE
+  // CASCADE (tasks, sprints, wiki, members, prompt history, code notes,
+  // experiments, activity); dev_lists is SET NULL. Wrapped in a trx so it's
+  // atomic — if any non-cascade grandchild blocks it, nothing is deleted.
+  async deleteProject(projectId: string) {
+    const { db } = require('@vibestudio/database');
+    const project = await db('dev_projects').where('id', projectId).first();
+    if (!project) throw new Error('Project not found');
+    const total = await db('dev_projects').count('* as c').first();
+    if (parseInt((total?.c as string) || '0') <= 1) throw new Error('Cannot delete the only project');
+    await db('dev_projects').where('id', projectId).del();
+    return { deleted: true, id: projectId, name: project.name };
+  },
+
   // ── Project context pack (filesystem docs for a managed project) ──
   // Scaffolds projects/<slug>/ from projects/_template, writes project.json +
   // standard doc stubs, and links dev_projects.settings.docs_path. Idempotent.

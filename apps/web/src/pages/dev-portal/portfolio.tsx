@@ -82,6 +82,14 @@ export default function Portfolio() {
     try { await devApi('put', `/projects/${projectId}`, { health }); devApi('get', '/portfolio').then(r => setProjects(r.data.data || [])).catch(() => {}); } catch {}
   };
 
+  const deleteProject = async (p: any) => {
+    if (!confirm(`Delete project "${p.name}" and ALL its tasks, sprints, wiki, members and history? This cannot be undone.`)) return;
+    try {
+      await devApi('delete', `/projects/${p.id}`);
+      devApi('get', '/portfolio').then(r => setProjects(r.data.data || [])).catch(() => {});
+    } catch (e: any) { alert('Delete failed: ' + (e?.response?.data?.error?.message || 'unknown')); }
+  };
+
   const packPath = (p: any): string | null => {
     try { const s = typeof p.settings === 'string' ? JSON.parse(p.settings) : (p.settings || {}); return s?.docs_path || null; } catch { return null; }
   };
@@ -224,6 +232,9 @@ export default function Portfolio() {
                           <option value="behind">Behind</option>
                           <option value="blocked">Blocked</option>
                         </select>
+                      )}
+                      {isMgr && (
+                        <button onClick={() => deleteProject(p)} title="Delete project" className="text-2xs font-semibold text-red-500 hover:text-red-700 px-2 py-1 rounded-lg hover:bg-red-50">🗑</button>
                       )}
                     </div>
                   </div>

@@ -48,16 +48,13 @@ interface UsageData {
 }
 
 const ORIGIN_LABELS: Record<string, string> = {
-  dev_portal_chat: 'Dev-Portal Chat',
-  ai_bookkeeping: 'AI Bookkeeping',
-  invoice_agent: 'Invoice Agent',
-  tax_advisor: 'Tax Advisor',
-  voice_agent: 'Voice Agent',
-  vendor_learning: 'Vendor Learning',
-  anomaly_detector: 'Anomaly Detector',
-  ocr_classifier: 'OCR Classifier',
-  review_engine: 'Review Engine',
-  predictive_analysis: 'Predictive Analysis',
+  dev_portal_chat: 'AI Panel Chat',
+  prompt_builder: 'Prompt Builder',
+  ab_test: 'Prompt A/B Lab',
+  memory_search: 'Memory Search',
+  bug_capture: 'Bug Capture',
+  context_pack: 'Context Pack',
+  code_review: 'Code Review',
   other: 'Other',
 };
 

@@ -5,6 +5,13 @@ problem · root cause · fix (files) · result · regression risk · follow-up.
 
 ---
 
+### 2026-06-01 · Leftover accounting AI-origin labels + missing delete-project
+- **Tool/model:** Claude Code (Opus 4.8). Local PostgreSQL 17. Verified via API + psql.
+- **Problem:** user reported "links on click → invoices" and "no delete option". Root: the **My AI Usage** page (`usage.tsx`) + `ai-call-logger.ts` still used ACCA's accounting AI origins (`invoice_agent`, `ai_bookkeeping`, `tax_advisor`, `ocr_classifier`, `anomaly_detector`, …) — the "Invoice/OCR" text the user saw. And there was no way to delete a project (only delete-member existed; no `DELETE /projects/:id`).
+- **Fix:** (1) Replaced the `AiOrigin` union + `ORIGIN_LABELS` with VibeStudio dev origins (`dev_portal_chat`/`prompt_builder`/`ab_test`/`memory_search`/`bug_capture`/`context_pack`/`code_review`/`other`). (2) Added `deleteProject(projectId)` (service, trx, refuses the last project) + `DELETE /projects/:projectId` (`requireRole('ceo','lead')` + membership unless ceo) + a 🗑 button with confirm on each portfolio card for managers. Relies on existing `ON DELETE CASCADE` FKs (tasks/sprints/wiki/members/prompt-history/code-notes/experiments/activity; `dev_lists` SET NULL).
+- **Result:** ✅ usage origins now read as dev features. Delete verified end-to-end: throwaway project + task → `DELETE` → project & task gone (cascade), member row gone; only-project guard blocks deleting VIBE. (Note: VibeStudio's web app has **no** invoice pages/links at all — confirmed by full scan — so any remaining "invoice screen" is the separate ACCA app at :3000 or a stale window; reload the desktop window.)
+- **Regression risk:** low. Delete is destructive but ceo/lead-gated, confirm-dialogged, atomic, and refuses the last project.
+
 ### 2026-06-01 · Multi-project workspaces + CEO super-admin (design "the right way")
 - **Tool/model:** Claude Code (Opus 4.8). Local PostgreSQL 17, RLS enabled. Verified via the live API + psql.
 - **Problem / need:** the studio's access model was wrong. `listProjects()`/`getPortfolioStats()` returned **every** project to **everyone** (no "projects I belong to"), while FORCE-RLS (079) scoped `dev_tasks`/`dev_sprints`/`dev_wiki_pages` to `dev_project_members` with **no super-admin** — so the CEO opened any non-member workspace to an **empty** board. Desired: regular users see/land on only their linked projects; the `ceo` role sees all projects and can enter any workspace.
